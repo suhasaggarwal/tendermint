@@ -22,8 +22,8 @@ const (
 
 // Transport-level errors.
 var (
-	ErrPeerFilterTimeout = errors.New("peer filter timeout")
-	ErrPeerRejected      = errors.New("peer rejected")
+	ErrTransportFilterTimeout = errors.New("peer filter timeout")
+	ErrPeerRejected           = errors.New("peer rejected")
 )
 
 // accept is the container to carry the upgraded connection and NodeInfo from an
@@ -80,6 +80,12 @@ func MultiplexTransportFilterTimeout(
 	timeout time.Duration,
 ) MultiplexTransportOption {
 	return func(mt *MultiplexTransport) { mt.filterTimeout = timeout }
+}
+
+// MultiplexTransportIDFilter sets the filter function for rejection of peers
+// based on their ID.
+func MultiplexTransportIDFilter(f idFilterFunc) MultiplexTransportOption {
+	return func(mt *MultiplexTransport) { mt.idFilter = f }
 }
 
 // MultiplexTransport accepts and dials tcp connections and upgrades them to
@@ -240,7 +246,26 @@ func (mt *MultiplexTransport) filterAddr(c net.Conn) error {
 	case err := <-errc:
 		return errors.Wrap(ErrPeerRejected, err.Error())
 	case <-time.After(mt.filterTimeout):
-		return ErrPeerFilterTimeout
+		return ErrTransportFilterTimeout
+	}
+}
+
+func (mt *MultiplexTransport) filterID(id ID) error {
+	if mt.idFilter == nil {
+		return nil
+	}
+
+	errc := make(chan error)
+
+	go func(id ID, errc chan<- error) {
+		errc <- mt.idFilter(id)
+	}(id, errc)
+
+	select {
+	case err := <-errc:
+		return errors.Wrap(ErrPeerRejected, err.Error())
+	case <-time.After(mt.filterTimeout):
+		return ErrTransportFilterTimeout
 	}
 }
 
@@ -277,7 +302,9 @@ func (mt *MultiplexTransport) upgrade(
 		)
 	}
 
-	// TODO(xla): After the NodeInfo is known we need to run the ID filter.
+	if err := mt.filterID(ni.ID); err != nil {
+		return nil, NodeInfo{}, err
+	}
 	// TODO(xla): Check NodeInfo compatibility.
 
 	return sc, ni, nil

@@ -105,8 +105,141 @@ func TestMultiplexTransportAddrFilterTimeout(t *testing.T) {
 	}
 
 	_, err = mt.Accept(peerConfig{})
-	if errors.Cause(err) != ErrPeerFilterTimeout {
-		t.Errorf("expected ErrPeerFilterTimeout")
+	if errors.Cause(err) != ErrTransportFilterTimeout {
+		t.Errorf("expected ErrTransportFilterTimeout")
+	}
+}
+
+func TestMultiplexTransportIDFilter(t *testing.T) {
+	var (
+		pv = ed25519.GenPrivKey()
+		mt = NewMultiplexTransport(
+			NodeInfo{
+				ID: PubKeyToID(pv.PubKey()),
+			},
+			NodeKey{
+				PrivKey: pv,
+			},
+		)
+	)
+
+	MultiplexTransportIDFilter(func(id ID) error {
+		return fmt.Errorf("ID is not welcome here")
+	})(mt)
+
+	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mt.Listen(*addr); err != nil {
+		t.Fatal(err)
+	}
+
+	errc := make(chan error)
+
+	go func() {
+		var (
+			pv     = ed25519.GenPrivKey()
+			dialer = NewMultiplexTransport(
+				NodeInfo{
+					ID: PubKeyToID(pv.PubKey()),
+				},
+				NodeKey{
+					PrivKey: pv,
+				},
+			)
+		)
+
+		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		_, err = dialer.Dial(*addr, peerConfig{})
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		close(errc)
+	}()
+
+	if err := <-errc; err != nil {
+		t.Errorf("connection failed: %v", err)
+	}
+
+	if _, err = mt.Accept(peerConfig{}); errors.Cause(err) != ErrPeerRejected {
+		t.Errorf("expected ErrPeerRejected")
+	}
+}
+
+func TestMultiplexTransportIDFilterTimeout(t *testing.T) {
+	var (
+		pv = ed25519.GenPrivKey()
+		mt = NewMultiplexTransport(
+			NodeInfo{
+				ID: PubKeyToID(pv.PubKey()),
+			},
+			NodeKey{
+				PrivKey: pv,
+			},
+		)
+	)
+
+	MultiplexTransportFilterTimeout(5 * time.Millisecond)(mt)
+	MultiplexTransportIDFilter(func(id ID) error {
+		time.Sleep(10 * time.Millisecond)
+		return nil
+	})(mt)
+
+	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mt.Listen(*addr); err != nil {
+		t.Fatal(err)
+	}
+
+	errc := make(chan error)
+
+	go func() {
+		var (
+			pv     = ed25519.GenPrivKey()
+			dialer = NewMultiplexTransport(
+				NodeInfo{
+					ID: PubKeyToID(pv.PubKey()),
+				},
+				NodeKey{
+					PrivKey: pv,
+				},
+			)
+		)
+
+		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		_, err = dialer.Dial(*addr, peerConfig{})
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		close(errc)
+	}()
+
+	if err := <-errc; err != nil {
+		t.Errorf("connection failed: %v", err)
+	}
+
+	_, err = mt.Accept(peerConfig{})
+	if errors.Cause(err) != ErrTransportFilterTimeout {
+		t.Errorf("expected ErrTransportFilterTimeout")
 	}
 }
 
