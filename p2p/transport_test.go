@@ -55,7 +55,58 @@ func TestMultiplexTransportAddrFilter(t *testing.T) {
 	}
 
 	if _, err = mt.Accept(peerConfig{}); errors.Cause(err) != ErrPeerRejected {
-		t.Errorf("expected ErrPeerReject")
+		t.Errorf("expected ErrPeerRejected")
+	}
+}
+
+func TestMultiplexTransportAddrFilterTimeout(t *testing.T) {
+	mt := NewMultiplexTransport(
+		NodeInfo{},
+		NodeKey{
+			PrivKey: ed25519.GenPrivKey(),
+		},
+	)
+
+	MultiplexTransportFilterTimeout(5 * time.Millisecond)(mt)
+	MultiplexTransportAddrFilter(func(addr net.Addr) error {
+		time.Sleep(10 * time.Millisecond)
+		return nil
+	})(mt)
+
+	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mt.Listen(*addr); err != nil {
+		t.Fatal(err)
+	}
+
+	errc := make(chan error)
+
+	go func() {
+		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		_, err = addr.Dial()
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		close(errc)
+	}()
+
+	if err := <-errc; err != nil {
+		t.Errorf("connection failed: %v", err)
+	}
+
+	_, err = mt.Accept(peerConfig{})
+	if errors.Cause(err) != ErrPeerFilterTimeout {
+		t.Errorf("expected ErrPeerFilterTimeout")
 	}
 }
 

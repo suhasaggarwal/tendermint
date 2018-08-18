@@ -16,12 +16,14 @@ import (
 
 const (
 	defaultDialTimeout      = time.Second
+	defaultFilterTimeout    = 5 * time.Second
 	defaultHandshakeTimeout = 3 * time.Second
 )
 
 // Transport-level errors.
 var (
-	ErrPeerRejected = errors.New("peer rejected")
+	ErrPeerFilterTimeout = errors.New("peer filter timeout")
+	ErrPeerRejected      = errors.New("peer rejected")
 )
 
 // accept is the container to carry the upgraded connection and NodeInfo from an
@@ -72,6 +74,14 @@ func MultiplexTransportAddrFilter(f addrFilterFunc) MultiplexTransportOption {
 	return func(mt *MultiplexTransport) { mt.addrFilter = f }
 }
 
+// MultiplexTransportFilterTimeout sets the timeout waited for filter calls to
+// return.
+func MultiplexTransportFilterTimeout(
+	timeout time.Duration,
+) MultiplexTransportOption {
+	return func(mt *MultiplexTransport) { mt.filterTimeout = timeout }
+}
+
 // MultiplexTransport accepts and dials tcp connections and upgrades them to
 // multiplexed peers.
 type MultiplexTransport struct {
@@ -84,6 +94,7 @@ type MultiplexTransport struct {
 	peers map[net.Conn]NodeInfo
 
 	dialTimeout      time.Duration
+	filterTimeout    time.Duration
 	handshakeTimeout time.Duration
 	nodeAddr         NetAddress
 	nodeInfo         NodeInfo
@@ -112,6 +123,7 @@ func NewMultiplexTransport(
 		acceptc:          make(chan accept),
 		closec:           make(chan struct{}),
 		dialTimeout:      defaultDialTimeout,
+		filterTimeout:    defaultFilterTimeout,
 		handshakeTimeout: defaultHandshakeTimeout,
 		mConfig:          conn.DefaultMConnConfig(),
 		nodeInfo:         nodeInfo,
@@ -213,6 +225,25 @@ func (mt *MultiplexTransport) acceptPeers() {
 	}
 }
 
+func (mt *MultiplexTransport) filterAddr(c net.Conn) error {
+	if mt.addrFilter == nil {
+		return nil
+	}
+
+	errc := make(chan error)
+
+	go func(c net.Conn, errc chan<- error) {
+		errc <- mt.addrFilter(c.RemoteAddr())
+	}(c, errc)
+
+	select {
+	case err := <-errc:
+		return errors.Wrap(ErrPeerRejected, err.Error())
+	case <-time.After(mt.filterTimeout):
+		return ErrPeerFilterTimeout
+	}
+}
+
 func (mt *MultiplexTransport) upgrade(
 	c net.Conn,
 ) (sc *conn.SecretConnection, ni NodeInfo, err error) {
@@ -222,10 +253,8 @@ func (mt *MultiplexTransport) upgrade(
 		}
 	}()
 
-	if mt.addrFilter != nil {
-		if err := mt.addrFilter(c.RemoteAddr()); err != nil {
-			return nil, NodeInfo{}, errors.Wrap(ErrPeerRejected, err.Error())
-		}
+	if err := mt.filterAddr(c); err != nil {
+		return nil, NodeInfo{}, err
 	}
 
 	sc, err = secretConn(c, mt.handshakeTimeout, mt.nodeKey.PrivKey)
