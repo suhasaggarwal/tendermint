@@ -267,6 +267,16 @@ func (mt *MultiplexTransport) upgrade(
 		return nil, NodeInfo{}, fmt.Errorf("handshake failed: %v", err)
 	}
 
+	// Ensure connection key matches self reported key.
+	if connID := PubKeyToID(sc.RemotePubKey()); connID != ni.ID {
+		return nil, NodeInfo{}, errors.Wrapf(
+			ErrPeerRejected,
+			"conn.ID (%v) NodeInfo.ID (%v) missmatch",
+			connID,
+			ni.ID,
+		)
+	}
+
 	// TODO(xla): After the NodeInfo is known we need to run the ID filter.
 	// TODO(xla): Check NodeInfo compatibility.
 
