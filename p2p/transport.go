@@ -1,10 +1,11 @@
 package p2p
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/tendermint/tendermint/config"
 	crypto "github.com/tendermint/tendermint/crypto"
@@ -16,6 +17,11 @@ import (
 const (
 	defaultDialTimeout      = time.Second
 	defaultHandshakeTimeout = 3 * time.Second
+)
+
+// Transport-level errors.
+var (
+	ErrPeerRejected = errors.New("peer rejected")
 )
 
 // accept is the container to carry the upgraded connection and NodeInfo from an
@@ -53,9 +59,22 @@ type transportLifecycle interface {
 	Listen(NetAddress) error
 }
 
-// multiplexTransport accepts and dials tcp connections and upgrades them to
+type addrFilterFunc func(net.Addr) error
+type idFilterFunc func(ID) error
+
+// MultiplexTransportOption sets an optional parameter on the
+// MultiplexTransport.
+type MultiplexTransportOption func(*MultiplexTransport)
+
+// MultiplexTransportAddrFilter sets the filter function for rejection of peers
+// based on their address.
+func MultiplexTransportAddrFilter(f addrFilterFunc) MultiplexTransportOption {
+	return func(mt *MultiplexTransport) { mt.addrFilter = f }
+}
+
+// MultiplexTransport accepts and dials tcp connections and upgrades them to
 // multiplexed peers.
-type multiplexTransport struct {
+type MultiplexTransport struct {
 	listener net.Listener
 
 	acceptc chan accept
@@ -70,6 +89,9 @@ type multiplexTransport struct {
 	nodeInfo         NodeInfo
 	nodeKey          NodeKey
 
+	addrFilter addrFilterFunc
+	idFilter   idFilterFunc
+
 	// TODO(xla): Those configs are still needed as we parameterise peerConn and
 	// peer currently. All relevant configuration should be refactored into options
 	// with sane defaults.
@@ -78,15 +100,15 @@ type multiplexTransport struct {
 }
 
 // Test multiplexTransport for interface completeness.
-var _ Transport = (*multiplexTransport)(nil)
-var _ transportLifecycle = (*multiplexTransport)(nil)
+var _ Transport = (*MultiplexTransport)(nil)
+var _ transportLifecycle = (*MultiplexTransport)(nil)
 
 // NewMultiplexTransport returns a tcp conencted multiplexed peers.
 func NewMultiplexTransport(
 	nodeInfo NodeInfo,
 	nodeKey NodeKey,
-) *multiplexTransport {
-	return &multiplexTransport{
+) *MultiplexTransport {
+	return &MultiplexTransport{
 		acceptc:          make(chan accept),
 		closec:           make(chan struct{}),
 		dialTimeout:      defaultDialTimeout,
@@ -98,16 +120,14 @@ func NewMultiplexTransport(
 	}
 }
 
-func (mt *multiplexTransport) Accept(cfg peerConfig) (Peer, error) {
+// Accept implements Transport.
+func (mt *MultiplexTransport) Accept(cfg peerConfig) (Peer, error) {
 	select {
+	// This case should never have any side-effectful/blocking operations to
+	// ensure that quality peers are ready to be used.
 	case a := <-mt.acceptc:
 		if a.err != nil {
 			return nil, a.err
-		}
-
-		err := mt.filterPeer(a.conn, a.nodeInfo)
-		if err != nil {
-			return nil, errors.New("peer filtered")
 		}
 
 		cfg.outbound = false
@@ -118,7 +138,8 @@ func (mt *multiplexTransport) Accept(cfg peerConfig) (Peer, error) {
 	}
 }
 
-func (mt *multiplexTransport) Dial(
+// Dial implements Transport.
+func (mt *MultiplexTransport) Dial(
 	addr NetAddress,
 	cfg peerConfig,
 ) (Peer, error) {
@@ -127,28 +148,25 @@ func (mt *multiplexTransport) Dial(
 		return nil, err
 	}
 
-	uc, ni, err := upgrade(c, mt.handshakeTimeout, mt.nodeKey.PrivKey, mt.nodeInfo)
+	sc, ni, err := mt.upgrade(c)
 	if err != nil {
-		return nil, errors.New("upgrade failed")
-	}
-
-	err = mt.filterPeer(uc, ni)
-	if err != nil {
-		return nil, errors.New("peer filtered")
+		return nil, err
 	}
 
 	cfg.outbound = true
 
-	return mt.wrapPeer(uc, ni, cfg), nil
+	return mt.wrapPeer(sc, ni, cfg), nil
 }
 
-func (mt *multiplexTransport) Close() error {
+// Close implements transportLifecycle.
+func (mt *MultiplexTransport) Close() error {
 	close(mt.closec)
 
 	return mt.listener.Close()
 }
 
-func (mt *multiplexTransport) Listen(addr NetAddress) error {
+// Listen implements transportLifecycle.
+func (mt *MultiplexTransport) Listen(addr NetAddress) error {
 	ln, err := net.Listen("tcp", addr.DialString())
 	if err != nil {
 		return err
@@ -162,7 +180,7 @@ func (mt *multiplexTransport) Listen(addr NetAddress) error {
 	return nil
 }
 
-func (mt *multiplexTransport) acceptPeers() {
+func (mt *MultiplexTransport) acceptPeers() {
 	for {
 		c, err := mt.listener.Accept()
 		if err != nil {
@@ -175,20 +193,16 @@ func (mt *multiplexTransport) acceptPeers() {
 			return
 		}
 
-		// Connection upgrade should be asynchronous to avoid Head-of-line blocking[0]
+		// Connection upgrade and filtering should be asynchronous to avoid
+		// Head-of-line blocking[0].
 		// Reference:  https://github.com/tendermint/tendermint/issues/2047
 		//
 		// [0] https://en.wikipedia.org/wiki/Head-of-line_blocking
 		go func(conn net.Conn) {
-			c, ni, err := upgrade(
-				c,
-				mt.handshakeTimeout,
-				mt.nodeKey.PrivKey,
-				mt.nodeInfo,
-			)
+			sc, ni, err := mt.upgrade(c)
 
 			select {
-			case mt.acceptc <- accept{c, ni, err}:
+			case mt.acceptc <- accept{sc, ni, err}:
 				// Make the upgraded peer available.
 			case <-mt.closec:
 				// Give up if the transport was closed.
@@ -199,14 +213,38 @@ func (mt *multiplexTransport) acceptPeers() {
 	}
 }
 
-func (mt *multiplexTransport) filterPeer(c net.Conn, ni NodeInfo) error {
-	// TODO(xla): Implement IP filter.
-	// TODO(xla): Implement ID filter.
+func (mt *MultiplexTransport) upgrade(
+	c net.Conn,
+) (sc *conn.SecretConnection, ni NodeInfo, err error) {
+	defer func() {
+		if err != nil {
+			_ = c.Close()
+		}
+	}()
+
+	if mt.addrFilter != nil {
+		if err := mt.addrFilter(c.RemoteAddr()); err != nil {
+			return nil, NodeInfo{}, errors.Wrap(ErrPeerRejected, err.Error())
+		}
+	}
+
+	sc, err = secretConn(c, mt.handshakeTimeout, mt.nodeKey.PrivKey)
+	if err != nil {
+		return nil, NodeInfo{}, fmt.Errorf("secrect conn failed: %v", err)
+	}
+
+	ni, err = handshake(sc, mt.handshakeTimeout, mt.nodeInfo)
+	if err != nil {
+		return nil, NodeInfo{}, fmt.Errorf("handshake failed: %v", err)
+	}
+
+	// TODO(xla): After the NodeInfo is known we need to run the ID filter.
 	// TODO(xla): Check NodeInfo compatibility.
-	return nil
+
+	return sc, ni, nil
 }
 
-func (mt *multiplexTransport) wrapPeer(
+func (mt *MultiplexTransport) wrapPeer(
 	c net.Conn,
 	ni NodeInfo,
 	cfg peerConfig,
@@ -278,42 +316,17 @@ func secretConn(
 	c net.Conn,
 	timeout time.Duration,
 	privKey crypto.PrivKey,
-) (net.Conn, error) {
+) (*conn.SecretConnection, error) {
 	if err := c.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, err
 	}
 
-	c, err := conn.MakeSecretConnection(c, privKey)
+	sc, err := conn.MakeSecretConnection(c, privKey)
 	if err != nil {
 		return nil, err
 	}
 
-	return c, c.SetDeadline(time.Time{})
-}
-
-func upgrade(
-	conn net.Conn,
-	timeout time.Duration,
-	privKey crypto.PrivKey,
-	nodeInfo NodeInfo,
-) (sc net.Conn, ni NodeInfo, err error) {
-	defer func() {
-		if err != nil {
-			_ = conn.Close()
-		}
-	}()
-
-	c, err := secretConn(conn, timeout, privKey)
-	if err != nil {
-		return nil, NodeInfo{}, fmt.Errorf("secrect conn failed: %v", err)
-	}
-
-	ni, err = handshake(c, timeout, nodeInfo)
-	if err != nil {
-		return nil, NodeInfo{}, fmt.Errorf("handshake failed: %v", err)
-	}
-
-	return c, ni, nil
+	return sc, sc.SetDeadline(time.Time{})
 }
 
 // multiplexPeer is the Peer implementation returned by the multiplexTransport

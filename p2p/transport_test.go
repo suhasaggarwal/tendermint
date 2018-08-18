@@ -7,10 +7,59 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/tendermint/tendermint/crypto/ed25519"
 )
 
-func TestTransportAcceptDial(t *testing.T) {
+func TestMultiplexTransportAddrFilter(t *testing.T) {
+	mt := NewMultiplexTransport(
+		NodeInfo{},
+		NodeKey{
+			PrivKey: ed25519.GenPrivKey(),
+		},
+	)
+
+	MultiplexTransportAddrFilter(func(addr net.Addr) error {
+		return fmt.Errorf("rejected")
+	})(mt)
+
+	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mt.Listen(*addr); err != nil {
+		t.Fatal(err)
+	}
+
+	errc := make(chan error)
+
+	go func() {
+		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		_, err = addr.Dial()
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		close(errc)
+	}()
+
+	if err := <-errc; err != nil {
+		t.Errorf("connection failed: %v", err)
+	}
+
+	if _, err = mt.Accept(peerConfig{}); errors.Cause(err) != ErrPeerRejected {
+		t.Errorf("expected ErrPeerReject")
+	}
+}
+
+func TestMultiplexTransportAcceptDial(t *testing.T) {
 	mt := NewMultiplexTransport(
 		NodeInfo{},
 		NodeKey{
@@ -86,7 +135,7 @@ func TestTransportAcceptDial(t *testing.T) {
 	}
 }
 
-func TestTransportAcceptNonBlocking(t *testing.T) {
+func TestMultiplexTransportAcceptNonBlocking(t *testing.T) {
 	mt := NewMultiplexTransport(
 		NodeInfo{},
 		NodeKey{
@@ -137,7 +186,13 @@ func TestTransportAcceptNonBlocking(t *testing.T) {
 			errc <- fmt.Errorf("Fast peer timed out")
 		}
 
-		_, _, err = upgrade(c, 20*time.Millisecond, ed25519.GenPrivKey(), NodeInfo{})
+		sc, err := secretConn(c, 20*time.Millisecond, ed25519.GenPrivKey())
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		_, err = handshake(sc, 20*time.Millisecond, NodeInfo{})
 		if err != nil {
 			errc <- err
 			return
