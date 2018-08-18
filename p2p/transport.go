@@ -292,6 +292,10 @@ func (mt *MultiplexTransport) upgrade(
 		return nil, NodeInfo{}, fmt.Errorf("handshake failed: %v", err)
 	}
 
+	if err := ni.Validate(); err != nil {
+		return nil, NodeInfo{}, errors.Wrap(ErrPeerRejected, err.Error())
+	}
+
 	// Ensure connection key matches self reported key.
 	if connID := PubKeyToID(sc.RemotePubKey()); connID != ni.ID {
 		return nil, NodeInfo{}, errors.Wrapf(
@@ -302,10 +306,13 @@ func (mt *MultiplexTransport) upgrade(
 		)
 	}
 
+	if err := mt.nodeInfo.CompatibleWith(ni); err != nil {
+		return nil, NodeInfo{}, errors.Wrap(ErrPeerRejected, err.Error())
+	}
+
 	if err := mt.filterID(ni.ID); err != nil {
 		return nil, NodeInfo{}, err
 	}
-	// TODO(xla): Check NodeInfo compatibility.
 
 	return sc, ni, nil
 }
