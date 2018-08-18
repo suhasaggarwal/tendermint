@@ -82,13 +82,17 @@ var _ Transport = (*multiplexTransport)(nil)
 var _ transportLifecycle = (*multiplexTransport)(nil)
 
 // NewMultiplexTransport returns a tcp conencted multiplexed peers.
-func NewMultiplexTransport(nodeKey NodeKey) *multiplexTransport {
+func NewMultiplexTransport(
+	nodeInfo NodeInfo,
+	nodeKey NodeKey,
+) *multiplexTransport {
 	return &multiplexTransport{
 		acceptc:          make(chan accept),
 		closec:           make(chan struct{}),
 		dialTimeout:      defaultDialTimeout,
 		handshakeTimeout: defaultHandshakeTimeout,
 		mConfig:          conn.DefaultMConnConfig(),
+		nodeInfo:         nodeInfo,
 		nodeKey:          nodeKey,
 		peers:            map[net.Conn]NodeInfo{},
 	}
@@ -226,7 +230,6 @@ func (mt *multiplexTransport) wrapPeer(
 			cfg.onPeerError,
 		),
 		func() {
-			fmt.Println("onStop")
 			delete(mt.peers, c)
 			_ = c.Close()
 		},

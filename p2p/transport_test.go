@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"fmt"
 	"net"
 	"reflect"
 	"testing"
@@ -10,9 +11,12 @@ import (
 )
 
 func TestTransportAcceptDial(t *testing.T) {
-	mt := NewMultiplexTransport(NodeKey{
-		PrivKey: ed25519.GenPrivKey(),
-	})
+	mt := NewMultiplexTransport(
+		NodeInfo{},
+		NodeKey{
+			PrivKey: ed25519.GenPrivKey(),
+		},
+	)
 
 	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
 	if err != nil {
@@ -26,9 +30,12 @@ func TestTransportAcceptDial(t *testing.T) {
 	errc := make(chan error)
 
 	go func() {
-		dialer := NewMultiplexTransport(NodeKey{
-			PrivKey: ed25519.GenPrivKey(),
-		})
+		dialer := NewMultiplexTransport(
+			NodeInfo{},
+			NodeKey{
+				PrivKey: ed25519.GenPrivKey(),
+			},
+		)
 
 		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
 		if err != nil {
@@ -79,13 +86,119 @@ func TestTransportAcceptDial(t *testing.T) {
 	}
 }
 
+func TestTransportAcceptNonBlocking(t *testing.T) {
+	mt := NewMultiplexTransport(
+		NodeInfo{},
+		NodeKey{
+			PrivKey: ed25519.GenPrivKey(),
+		},
+	)
+
+	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mt.Listen(*addr); err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		pv           = ed25519.GenPrivKey()
+		fastNodeInfo = NodeInfo{
+			ID: PubKeyToID(pv.PubKey()),
+		}
+		errc  = make(chan error)
+		fastc = make(chan struct{})
+		slowc = make(chan struct{})
+	)
+
+	// Simulate slow Peer.
+	go func() {
+		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		c, err := addr.Dial()
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		close(slowc)
+
+		select {
+		case <-fastc:
+			// Fast peer connected.
+		case <-time.After(50 * time.Millisecond):
+			// We error if the fast peer didn't succeed.
+			errc <- fmt.Errorf("Fast peer timed out")
+		}
+
+		_, _, err = upgrade(c, 20*time.Millisecond, ed25519.GenPrivKey(), NodeInfo{})
+		if err != nil {
+			errc <- err
+			return
+		}
+	}()
+
+	// Simulate fast Peer.
+	go func() {
+		<-slowc
+
+		var (
+			dialer = NewMultiplexTransport(
+				fastNodeInfo,
+				NodeKey{
+					PrivKey: pv,
+				},
+			)
+		)
+
+		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		_, err = dialer.Dial(*addr, peerConfig{})
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		close(errc)
+		close(fastc)
+	}()
+
+	if err := <-errc; err != nil {
+		t.Errorf("connection failed: %v", err)
+	}
+
+	p, err := mt.Accept(peerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if have, want := p.NodeInfo(), fastNodeInfo; !reflect.DeepEqual(have, want) {
+		t.Errorf("have %v, want %v", have, want)
+	}
+}
+
 func TestTransportHandshake(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	peerNodeInfo := NodeInfo{}
+	var (
+		peerPV       = ed25519.GenPrivKey()
+		peerNodeInfo = NodeInfo{
+			ID: PubKeyToID(peerPV.PubKey()),
+		}
+	)
 
 	go func() {
 		c, err := net.Dial(ln.Addr().Network(), ln.Addr().String())
