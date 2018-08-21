@@ -5,6 +5,42 @@ import (
 	"net"
 )
 
+// ErrRejected indicates that a Peer was rejected carrying additional
+// information as to the reason.
+type ErrRejected struct {
+	conn              net.Conn
+	err               error
+	id                ID
+	isAuthFailure     bool
+	isDuplicate       bool
+	isFiltered        bool
+	isIncompatible    bool
+	isNodeInfoInvalid bool
+	isSelf            bool
+}
+
+func (e *ErrRejected) Error() string {
+	return fmt.Sprintf("")
+}
+
+// IsAuthFailure when Peer authentication was unsuccessful.
+func (e *ErrRejected) IsAuthFailure() bool { return e.isAuthFailure }
+
+// IsDuplicate when Peer ID or IP are present already.
+func (e *ErrRejected) IsDuplicate() bool { return e.isDuplicate }
+
+// IsFiltered when Peer ID or IP was filtered.
+func (e *ErrRejected) IsFiltered() bool { return e.isFiltered }
+
+// IsIncompatible when Peer NodeInfo is not compatible with our own.
+func (e *ErrRejected) IsIncompatible() bool { return e.isIncompatible }
+
+// IsNodeInfoInvalid when the sent NodeInfo is not valid.
+func (e *ErrRejected) IsNodeInfoInvalid() bool { return e.isNodeInfoInvalid }
+
+// IsSelf when Peer is our own node.
+func (e *ErrRejected) IsSelf() bool { return e.isSelf }
+
 // ErrSwitchDuplicatePeerID to be raised when a peer is connecting with a known
 // ID.
 type ErrSwitchDuplicatePeerID struct {

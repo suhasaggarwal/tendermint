@@ -3,6 +3,7 @@ package p2p
 import (
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -23,7 +24,6 @@ const (
 // Transport-level errors.
 var (
 	ErrTransportFilterTimeout = errors.New("peer filter timeout")
-	ErrPeerRejected           = errors.New("peer rejected")
 )
 
 // accept is the container to carry the upgraded connection and NodeInfo from an
@@ -97,7 +97,8 @@ type MultiplexTransport struct {
 	closec  chan struct{}
 
 	// Lookup table for duplicate ip and id checks.
-	peers map[net.Conn]NodeInfo
+	peers    map[net.Conn]NodeInfo
+	peersMux sync.Mutex
 
 	dialTimeout      time.Duration
 	filterTimeout    time.Duration
@@ -244,7 +245,7 @@ func (mt *MultiplexTransport) filterAddr(c net.Conn) error {
 
 	select {
 	case err := <-errc:
-		return errors.Wrap(ErrPeerRejected, err.Error())
+		return &ErrRejected{conn: c, err: err, isFiltered: true}
 	case <-time.After(mt.filterTimeout):
 		return ErrTransportFilterTimeout
 	}
@@ -263,7 +264,7 @@ func (mt *MultiplexTransport) filterID(id ID) error {
 
 	select {
 	case err := <-errc:
-		return errors.Wrap(ErrPeerRejected, err.Error())
+		return &ErrRejected{err: err, id: id, isFiltered: true}
 	case <-time.After(mt.filterTimeout):
 		return ErrTransportFilterTimeout
 	}
@@ -284,35 +285,63 @@ func (mt *MultiplexTransport) upgrade(
 
 	sc, err = secretConn(c, mt.handshakeTimeout, mt.nodeKey.PrivKey)
 	if err != nil {
-		return nil, NodeInfo{}, fmt.Errorf("secrect conn failed: %v", err)
+		return nil, NodeInfo{}, &ErrRejected{
+			conn:          c,
+			err:           fmt.Errorf("secrect conn failed: %v", err),
+			isAuthFailure: true,
+		}
 	}
 
 	ni, err = handshake(sc, mt.handshakeTimeout, mt.nodeInfo)
 	if err != nil {
-		return nil, NodeInfo{}, fmt.Errorf("handshake failed: %v", err)
+		return nil, NodeInfo{}, &ErrRejected{
+			conn:          c,
+			err:           fmt.Errorf("handshake failed: %v", err),
+			isAuthFailure: true,
+		}
 	}
 
 	if err := ni.Validate(); err != nil {
-		return nil, NodeInfo{}, errors.Wrap(ErrPeerRejected, err.Error())
+		return nil, NodeInfo{}, &ErrRejected{
+			conn:              c,
+			err:               err,
+			isNodeInfoInvalid: true,
+		}
 	}
 
 	// Ensure connection key matches self reported key.
 	if connID := PubKeyToID(sc.RemotePubKey()); connID != ni.ID {
-		return nil, NodeInfo{}, errors.Wrapf(
-			ErrPeerRejected,
-			"conn.ID (%v) NodeInfo.ID (%v) missmatch",
-			connID,
-			ni.ID,
-		)
+		return nil, NodeInfo{}, &ErrRejected{
+			conn: c,
+			id:   connID,
+			err: fmt.Errorf(
+				"conn.ID (%v) NodeInfo.ID (%v) missmatch",
+				connID,
+				ni.ID,
+			),
+			isAuthFailure: true,
+		}
+	}
+
+	// Reject self.
+	if mt.nodeInfo.ID == ni.ID {
+		return nil, NodeInfo{}, &ErrRejected{conn: c, id: ni.ID, isSelf: true}
 	}
 
 	if err := mt.nodeInfo.CompatibleWith(ni); err != nil {
-		return nil, NodeInfo{}, errors.Wrap(ErrPeerRejected, err.Error())
+		return nil, NodeInfo{}, &ErrRejected{
+			conn:           c,
+			err:            err,
+			id:             ni.ID,
+			isIncompatible: true,
+		}
 	}
 
 	if err := mt.filterID(ni.ID); err != nil {
 		return nil, NodeInfo{}, err
 	}
+
+	// TODO(xla): Filter duplicate IDs and IPs.
 
 	return sc, ni, nil
 }
@@ -322,6 +351,9 @@ func (mt *MultiplexTransport) wrapPeer(
 	ni NodeInfo,
 	cfg peerConfig,
 ) Peer {
+	defer mt.peersMux.Unlock()
+	mt.peersMux.Lock()
+
 	pc := peerConn{
 		conn:       c,
 		config:     &mt.p2pConfig,
@@ -341,6 +373,9 @@ func (mt *MultiplexTransport) wrapPeer(
 			cfg.onPeerError,
 		),
 		func() {
+			defer mt.peersMux.Unlock()
+			mt.peersMux.Lock()
+
 			delete(mt.peers, c)
 			_ = c.Close()
 		},

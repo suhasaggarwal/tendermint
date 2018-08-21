@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+
 	"github.com/tendermint/tendermint/crypto/ed25519"
 )
 
@@ -54,8 +55,13 @@ func TestMultiplexTransportAddrFilter(t *testing.T) {
 		t.Errorf("connection failed: %v", err)
 	}
 
-	if _, err = mt.Accept(peerConfig{}); errors.Cause(err) != ErrPeerRejected {
-		t.Errorf("expected ErrPeerRejected")
+	_, err = mt.Accept(peerConfig{})
+	if err, ok := err.(*ErrRejected); ok {
+		if !err.IsFiltered() {
+			t.Errorf("expected peer to be filtered")
+		}
+	} else {
+		t.Errorf("expected ErrRejected")
 	}
 }
 
@@ -176,8 +182,13 @@ func TestMultiplexTransportIDFilter(t *testing.T) {
 		t.Errorf("connection failed: %v", err)
 	}
 
-	if _, err = mt.Accept(peerConfig{}); errors.Cause(err) != ErrPeerRejected {
-		t.Errorf("expected ErrPeerRejected")
+	_, err = mt.Accept(peerConfig{})
+	if err, ok := err.(*ErrRejected); ok {
+		if !err.IsFiltered() {
+			t.Errorf("expected peer to be filtered")
+		}
+	} else {
+		t.Errorf("expected ErrRejected")
 	}
 }
 
@@ -531,12 +542,17 @@ func TestMultiplexTransportValidateNodeInfo(t *testing.T) {
 		t.Errorf("connection failed: %v", err)
 	}
 
-	if _, err = mt.Accept(peerConfig{}); errors.Cause(err) != ErrPeerRejected {
-		t.Errorf("expected ErrPeerRejected")
+	_, err = mt.Accept(peerConfig{})
+	if err, ok := err.(*ErrRejected); ok {
+		if !err.IsNodeInfoInvalid() {
+			t.Errorf("expected NodeInfo to be invalid")
+		}
+	} else {
+		t.Errorf("expected ErrRejected")
 	}
 }
 
-func TestMultiplexTransportRejectIDs(t *testing.T) {
+func TestMultiplexTransportRejectMissmatchID(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -595,8 +611,146 @@ func TestMultiplexTransportRejectIDs(t *testing.T) {
 		t.Errorf("connection failed: %v", err)
 	}
 
-	if _, err = mt.Accept(peerConfig{}); errors.Cause(err) != ErrPeerRejected {
-		t.Errorf("expected ErrPeerRejected")
+	_, err = mt.Accept(peerConfig{})
+	if err, ok := err.(*ErrRejected); ok {
+		if !err.IsAuthFailure() {
+			t.Errorf("expected auth failure")
+		}
+	} else {
+		t.Errorf("expected ErrRejected")
+	}
+}
+
+func TestMultiplexTransportRejectIncompatible(t *testing.T) {
+	var (
+		pv = ed25519.GenPrivKey()
+		mt = NewMultiplexTransport(
+			NodeInfo{
+				ID:         PubKeyToID(pv.PubKey()),
+				ListenAddr: "127.0.0.1:0",
+				Moniker:    "transport",
+				Version:    "1.0.0",
+			},
+			NodeKey{
+				PrivKey: pv,
+			},
+		)
+	)
+
+	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mt.Listen(*addr); err != nil {
+		t.Fatal(err)
+	}
+
+	errc := make(chan error)
+
+	go func() {
+		var (
+			pv     = ed25519.GenPrivKey()
+			dialer = NewMultiplexTransport(
+				NodeInfo{
+					ID:         PubKeyToID(pv.PubKey()),
+					ListenAddr: "127.0.0.1:0",
+					Moniker:    "dialer",
+					Version:    "2.0.0",
+				},
+				NodeKey{
+					PrivKey: pv,
+				},
+			)
+		)
+
+		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		_, err = dialer.Dial(*addr, peerConfig{})
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		close(errc)
+	}()
+
+	_, err = mt.Accept(peerConfig{})
+	if err, ok := err.(*ErrRejected); ok {
+		if !err.IsIncompatible() {
+			t.Errorf("expected to reject incompatible")
+		}
+	} else {
+		t.Errorf("expected ErrRejected")
+	}
+}
+
+func TestMultiplexTransportRejectSelf(t *testing.T) {
+	var (
+		pv = ed25519.GenPrivKey()
+		mt = NewMultiplexTransport(
+			NodeInfo{
+				ID:         PubKeyToID(pv.PubKey()),
+				ListenAddr: "127.0.0.1:0",
+				Moniker:    "transport",
+				Version:    "1.0.0",
+			},
+			NodeKey{
+				PrivKey: pv,
+			},
+		)
+	)
+
+	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mt.Listen(*addr); err != nil {
+		t.Fatal(err)
+	}
+
+	errc := make(chan error)
+
+	go func() {
+		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		_, err = mt.Dial(*addr, peerConfig{})
+		if err != nil {
+			errc <- err
+			return
+		}
+
+		close(errc)
+	}()
+
+	if err := <-errc; err != nil {
+		if err, ok := err.(*ErrRejected); ok {
+			if !err.IsSelf() {
+				t.Errorf("expected to reject self")
+			}
+		} else {
+			t.Errorf("expected ErrRejected")
+		}
+	} else {
+		t.Errorf("expected connection failure")
+	}
+
+	_, err = mt.Accept(peerConfig{})
+	if err, ok := err.(*ErrRejected); ok {
+		if !err.IsSelf() {
+			t.Errorf("expected to reject self")
+		}
+	} else {
+		t.Errorf("expected ErrRejected")
 	}
 }
 
