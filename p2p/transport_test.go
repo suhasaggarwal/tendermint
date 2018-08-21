@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"reflect"
 	"testing"
@@ -266,7 +267,7 @@ func TestMultiplexTransportIDFilterTimeout(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportAcceptDial(t *testing.T) {
+func TestMultiplexTransportAcceptMultiple(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -291,64 +292,85 @@ func TestMultiplexTransportAcceptDial(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	errc := make(chan error)
+	var (
+		seed = rand.New(rand.NewSource(time.Now().UnixNano()))
+		errc = make(chan error, seed.Intn(64)+64)
+	)
 
-	go func() {
-		var (
-			pv     = ed25519.GenPrivKey()
-			dialer = NewMultiplexTransport(
-				NodeInfo{
-					ID:         PubKeyToID(pv.PubKey()),
-					ListenAddr: "127.0.0.1:0",
-					Moniker:    "dialer",
-					Version:    "1.0.0",
-				},
-				NodeKey{
-					PrivKey: pv,
-				},
+	// Setup dialers.
+	for i := 0; i < cap(errc); i++ {
+		go func() {
+			var (
+				pv     = ed25519.GenPrivKey()
+				dialer = NewMultiplexTransport(
+					NodeInfo{
+						ID:         PubKeyToID(pv.PubKey()),
+						ListenAddr: "127.0.0.1:0",
+						Moniker:    "dialer",
+						Version:    "1.0.0",
+					},
+					NodeKey{
+						PrivKey: pv,
+					},
+				)
 			)
-		)
 
-		addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
-		if err != nil {
-			errc <- err
-			return
-		}
+			addr, err := NewNetAddressStringWithOptionalID(mt.listener.Addr().String())
+			if err != nil {
+				errc <- err
+				return
+			}
 
-		_, err = dialer.Dial(*addr, peerConfig{})
-		if err != nil {
-			errc <- err
-			return
-		}
+			_, err = dialer.Dial(*addr, peerConfig{})
+			if err != nil {
+				errc <- err
+				return
+			}
 
-		close(errc)
-	}()
-
-	if err := <-errc; err != nil {
-		t.Errorf("connection failed: %v", err)
+			// Signal that the connection was established.
+			errc <- nil
+		}()
 	}
 
-	p, err := mt.Accept(peerConfig{})
-	if err != nil {
-		t.Fatal(err)
+	// Catch connection errors.
+	for i := 0; i < cap(errc); i++ {
+		if err := <-errc; err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// Test that we keep track of the Peer.
-	if have, want := len(mt.peers), 1; have != want {
+	ps := []Peer{}
+
+	// Accept all peers.
+	for i := 0; i < cap(errc); i++ {
+		p, err := mt.Accept(peerConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := p.Start(); err != nil {
+			t.Fatal(err)
+		}
+
+		ps = append(ps, p)
+	}
+
+	if have, want := len(ps), cap(errc); have != want {
 		t.Errorf("have %v, want %v", have, want)
 	}
 
-	err = p.Start()
-	if err != nil {
-		t.Fatal(err)
+	if have, want := len(mt.peers), cap(errc); have != want {
+		t.Errorf("have %v, want %v", have, want)
 	}
 
-	err = p.Stop()
-	if err != nil {
-		t.Fatal(err)
+	// Stop all peers.
+	for _, p := range ps {
+		if err := p.Stop(); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// Test that we successfully removed the peer after its lifecycle is complete.
+	// Test that we successfully removed peers after its lifecycle is complete.
 	if have, want := len(mt.peers), 0; have != want {
 		t.Errorf("have %v, want %v", have, want)
 	}
