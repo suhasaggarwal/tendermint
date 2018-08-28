@@ -61,17 +61,23 @@ type transportLifecycle interface {
 	Listen(NetAddress) error
 }
 
-type addrFilterFunc func(net.Addr) error
-type idFilterFunc func(ID) error
+// ConnFilterFunc to be implemented by filter hooks after a new connection has
+// been established.
+type ConnFilterFunc func(map[string]net.Conn, net.Conn) error
+
+// PeerFilterFunc to be implemented by filter hooks after a new Peer has been
+// fully setup.
+type PeerFilterFunc func(map[ID]Peer, Peer) error
 
 // MultiplexTransportOption sets an optional parameter on the
 // MultiplexTransport.
 type MultiplexTransportOption func(*MultiplexTransport)
 
-// MultiplexTransportAddrFilter sets the filter function for rejection of peers
-// based on their address.
-func MultiplexTransportAddrFilter(f addrFilterFunc) MultiplexTransportOption {
-	return func(mt *MultiplexTransport) { mt.addrFilter = f }
+// MultiplexTransportConnFilters sets the filters for rejection new connections.
+func MultiplexTransportConnFilters(
+	filters ...ConnFilterFunc,
+) MultiplexTransportOption {
+	return func(mt *MultiplexTransport) { mt.connFilters = filters }
 }
 
 // MultiplexTransportFilterTimeout sets the timeout waited for filter calls to
@@ -82,10 +88,11 @@ func MultiplexTransportFilterTimeout(
 	return func(mt *MultiplexTransport) { mt.filterTimeout = timeout }
 }
 
-// MultiplexTransportIDFilter sets the filter function for rejection of peers
-// based on their ID.
-func MultiplexTransportIDFilter(f idFilterFunc) MultiplexTransportOption {
-	return func(mt *MultiplexTransport) { mt.idFilter = f }
+// MultiplexTransportPeerFilters sets the filters for rejection of new peers.
+func MultiplexTransportPeerFilters(
+	filters ...PeerFilterFunc,
+) MultiplexTransportOption {
+	return func(mt *MultiplexTransport) { mt.peerFilters = filters }
 }
 
 // MultiplexTransport accepts and dials tcp connections and upgrades them to
@@ -97,7 +104,8 @@ type MultiplexTransport struct {
 	closec  chan struct{}
 
 	// Lookup table for duplicate ip and id checks.
-	peers    map[net.Conn]NodeInfo
+	conns    map[string]net.Conn
+	peers    map[ID]Peer
 	peersMux sync.Mutex
 
 	dialTimeout      time.Duration
@@ -107,8 +115,8 @@ type MultiplexTransport struct {
 	nodeInfo         NodeInfo
 	nodeKey          NodeKey
 
-	addrFilter addrFilterFunc
-	idFilter   idFilterFunc
+	connFilters []ConnFilterFunc
+	peerFilters []PeerFilterFunc
 
 	// TODO(xla): Those configs are still needed as we parameterise peerConn and
 	// peer currently. All relevant configuration should be refactored into options
@@ -135,7 +143,8 @@ func NewMultiplexTransport(
 		mConfig:          conn.DefaultMConnConfig(),
 		nodeInfo:         nodeInfo,
 		nodeKey:          nodeKey,
-		peers:            map[net.Conn]NodeInfo{},
+		conns:            map[string]net.Conn{},
+		peers:            map[ID]Peer{},
 	}
 }
 
@@ -232,42 +241,42 @@ func (mt *MultiplexTransport) acceptPeers() {
 	}
 }
 
-func (mt *MultiplexTransport) filterAddr(c net.Conn) error {
-	if mt.addrFilter == nil {
-		return nil
+func (mt *MultiplexTransport) filterConn(c net.Conn) error {
+	for _, f := range mt.connFilters {
+		errc := make(chan error)
+
+		go func(f ConnFilterFunc, c net.Conn, errc chan<- error) {
+			errc <- f(mt.conns, c)
+		}(f, c, errc)
+
+		select {
+		case err := <-errc:
+			return &ErrRejected{conn: c, err: err, isFiltered: true}
+		case <-time.After(mt.filterTimeout):
+			return ErrTransportFilterTimeout
+		}
 	}
 
-	errc := make(chan error)
-
-	go func(c net.Conn, errc chan<- error) {
-		errc <- mt.addrFilter(c.RemoteAddr())
-	}(c, errc)
-
-	select {
-	case err := <-errc:
-		return &ErrRejected{conn: c, err: err, isFiltered: true}
-	case <-time.After(mt.filterTimeout):
-		return ErrTransportFilterTimeout
-	}
+	return nil
 }
 
-func (mt *MultiplexTransport) filterID(id ID) error {
-	if mt.idFilter == nil {
-		return nil
+func (mt *MultiplexTransport) filterPeer(p Peer) error {
+	for _, f := range mt.peerFilters {
+		errc := make(chan error)
+
+		go func(f PeerFilterFunc, p Peer, errc chan<- error) {
+			errc <- f(mt.peers, p)
+		}(f, p, errc)
+
+		select {
+		case err := <-errc:
+			return &ErrRejected{err: err, id: p.ID(), isFiltered: true}
+		case <-time.After(mt.filterTimeout):
+			return ErrTransportFilterTimeout
+		}
 	}
 
-	errc := make(chan error)
-
-	go func(id ID, errc chan<- error) {
-		errc <- mt.idFilter(id)
-	}(id, errc)
-
-	select {
-	case err := <-errc:
-		return &ErrRejected{err: err, id: id, isFiltered: true}
-	case <-time.After(mt.filterTimeout):
-		return ErrTransportFilterTimeout
-	}
+	return nil
 }
 
 func (mt *MultiplexTransport) upgrade(
@@ -279,7 +288,7 @@ func (mt *MultiplexTransport) upgrade(
 		}
 	}()
 
-	if err := mt.filterAddr(c); err != nil {
+	if err := mt.filterConn(c); err != nil {
 		return nil, NodeInfo{}, err
 	}
 
@@ -337,11 +346,9 @@ func (mt *MultiplexTransport) upgrade(
 		}
 	}
 
-	if err := mt.filterID(ni.ID); err != nil {
-		return nil, NodeInfo{}, err
+	if _, ok := mt.peers[ni.ID]; ok {
+		return nil, NodeInfo{}, &ErrRejected{conn: c, id: ni.ID, isDuplicate: true}
 	}
-
-	// TODO(xla): Filter duplicate IDs and IPs.
 
 	return sc, ni, nil
 }
@@ -361,9 +368,7 @@ func (mt *MultiplexTransport) wrapPeer(
 		persistent: cfg.persistent,
 	}
 
-	mt.peers[c] = ni
-
-	return newMultiplexPeer(
+	p := newMultiplexPeer(
 		newPeer(
 			pc,
 			mt.mConfig,
@@ -376,10 +381,17 @@ func (mt *MultiplexTransport) wrapPeer(
 			defer mt.peersMux.Unlock()
 			mt.peersMux.Lock()
 
-			delete(mt.peers, c)
+			delete(mt.conns, c.RemoteAddr().String())
+			delete(mt.peers, ni.ID)
+
 			_ = c.Close()
 		},
 	)
+
+	mt.conns[c.RemoteAddr().String()] = c
+	mt.peers[ni.ID] = p
+
+	return p
 }
 
 func handshake(
