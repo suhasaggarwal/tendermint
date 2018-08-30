@@ -105,8 +105,9 @@ type MultiplexTransport struct {
 
 	// Lookup table for duplicate ip and id checks.
 	conns    map[string]net.Conn
+	connsMux sync.RWMutex
 	peers    map[ID]Peer
-	peersMux sync.Mutex
+	peersMux sync.RWMutex
 
 	dialTimeout      time.Duration
 	filterTimeout    time.Duration
@@ -160,7 +161,9 @@ func (mt *MultiplexTransport) Accept(cfg peerConfig) (Peer, error) {
 
 		cfg.outbound = false
 
-		return mt.wrapPeer(a.conn, a.nodeInfo, cfg), nil
+		p := mt.wrapPeer(a.conn, a.nodeInfo, cfg)
+
+		return p, mt.filterPeer(p)
 	case <-mt.closec:
 		return nil, errors.New("transport is closed")
 	}
@@ -176,6 +179,11 @@ func (mt *MultiplexTransport) Dial(
 		return nil, err
 	}
 
+	// TODO(xla): Evaluate if we should apply filters if we explicitly dial.
+	if err := mt.filterConn(c); err != nil {
+		return nil, err
+	}
+
 	sc, ni, err := mt.upgrade(c)
 	if err != nil {
 		return nil, err
@@ -183,7 +191,9 @@ func (mt *MultiplexTransport) Dial(
 
 	cfg.outbound = true
 
-	return mt.wrapPeer(sc, ni, cfg), nil
+	p := mt.wrapPeer(sc, ni, cfg)
+
+	return p, mt.filterPeer(p)
 }
 
 // Close implements transportLifecycle.
@@ -226,8 +236,16 @@ func (mt *MultiplexTransport) acceptPeers() {
 		// Reference:  https://github.com/tendermint/tendermint/issues/2047
 		//
 		// [0] https://en.wikipedia.org/wiki/Head-of-line_blocking
-		go func(conn net.Conn) {
-			sc, ni, err := mt.upgrade(c)
+		go func(c net.Conn) {
+			var (
+				ni NodeInfo
+				sc *conn.SecretConnection
+			)
+
+			err := mt.filterConn(c)
+			if err == nil {
+				sc, ni, err = mt.upgrade(c)
+			}
 
 			select {
 			case mt.acceptc <- accept{sc, ni, err}:
@@ -241,7 +259,25 @@ func (mt *MultiplexTransport) acceptPeers() {
 	}
 }
 
+func (mt *MultiplexTransport) cleanup(c net.Conn, id ID) error {
+	mt.connsMux.Lock()
+	delete(mt.conns, c.RemoteAddr().String())
+	mt.connsMux.Unlock()
+
+	mt.peersMux.Lock()
+	delete(mt.peers, id)
+	mt.peersMux.Unlock()
+
+	return c.Close()
+}
+
 func (mt *MultiplexTransport) filterConn(c net.Conn) error {
+	mt.connsMux.RLock()
+
+	if _, ok := mt.conns[c.RemoteAddr().String()]; ok {
+		return &ErrRejected{conn: c, isDuplicate: true}
+	}
+
 	for _, f := range mt.connFilters {
 		errc := make(chan error)
 
@@ -257,10 +293,22 @@ func (mt *MultiplexTransport) filterConn(c net.Conn) error {
 		}
 	}
 
+	mt.connsMux.RUnlock()
+
+	mt.connsMux.Lock()
+	mt.conns[c.RemoteAddr().String()] = c
+	mt.connsMux.Unlock()
+
 	return nil
 }
 
 func (mt *MultiplexTransport) filterPeer(p Peer) error {
+	mt.peersMux.RLock()
+
+	if _, ok := mt.peers[p.ID()]; ok {
+		return &ErrRejected{id: p.ID(), isDuplicate: true}
+	}
+
 	for _, f := range mt.peerFilters {
 		errc := make(chan error)
 
@@ -276,6 +324,12 @@ func (mt *MultiplexTransport) filterPeer(p Peer) error {
 		}
 	}
 
+	mt.peersMux.RUnlock()
+
+	mt.peersMux.Lock()
+	mt.peers[p.ID()] = p
+	mt.peersMux.Unlock()
+
 	return nil
 }
 
@@ -284,13 +338,9 @@ func (mt *MultiplexTransport) upgrade(
 ) (sc *conn.SecretConnection, ni NodeInfo, err error) {
 	defer func() {
 		if err != nil {
-			_ = c.Close()
+			_ = mt.cleanup(c, ni.ID)
 		}
 	}()
-
-	if err := mt.filterConn(c); err != nil {
-		return nil, NodeInfo{}, err
-	}
 
 	sc, err = secretConn(c, mt.handshakeTimeout, mt.nodeKey.PrivKey)
 	if err != nil {
@@ -346,10 +396,6 @@ func (mt *MultiplexTransport) upgrade(
 		}
 	}
 
-	if _, ok := mt.peers[ni.ID]; ok {
-		return nil, NodeInfo{}, &ErrRejected{conn: c, id: ni.ID, isDuplicate: true}
-	}
-
 	return sc, ni, nil
 }
 
@@ -358,9 +404,6 @@ func (mt *MultiplexTransport) wrapPeer(
 	ni NodeInfo,
 	cfg peerConfig,
 ) Peer {
-	defer mt.peersMux.Unlock()
-	mt.peersMux.Lock()
-
 	pc := peerConn{
 		conn:       c,
 		config:     &mt.p2pConfig,
@@ -368,7 +411,7 @@ func (mt *MultiplexTransport) wrapPeer(
 		persistent: cfg.persistent,
 	}
 
-	p := newMultiplexPeer(
+	return newMultiplexPeer(
 		newPeer(
 			pc,
 			mt.mConfig,
@@ -378,20 +421,9 @@ func (mt *MultiplexTransport) wrapPeer(
 			cfg.onPeerError,
 		),
 		func() {
-			defer mt.peersMux.Unlock()
-			mt.peersMux.Lock()
-
-			delete(mt.conns, c.RemoteAddr().String())
-			delete(mt.peers, ni.ID)
-
-			_ = c.Close()
+			_ = mt.cleanup(c, ni.ID)
 		},
 	)
-
-	mt.conns[c.RemoteAddr().String()] = c
-	mt.peers[ni.ID] = p
-
-	return p
 }
 
 func handshake(
