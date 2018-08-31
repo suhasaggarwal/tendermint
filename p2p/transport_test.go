@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -13,7 +14,7 @@ import (
 	"github.com/tendermint/tendermint/crypto/ed25519"
 )
 
-func TestMultiplexTransportConnFilter(t *testing.T) {
+func TestTransportMultiplexConnFilter(t *testing.T) {
 	mt := NewMultiplexTransport(
 		NodeInfo{},
 		NodeKey{
@@ -70,7 +71,7 @@ func TestMultiplexTransportConnFilter(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportConnFilterTimeout(t *testing.T) {
+func TestTransportMultiplexConnFilterTimeout(t *testing.T) {
 	mt := NewMultiplexTransport(
 		NodeInfo{},
 		NodeKey{
@@ -123,7 +124,7 @@ func TestMultiplexTransportConnFilterTimeout(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportPeerFilter(t *testing.T) {
+func TestTransportMultiplexPeerFilter(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -204,7 +205,7 @@ func TestMultiplexTransportPeerFilter(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportPeerFilterTimeout(t *testing.T) {
+func TestTransportMultiplexPeerFilterTimeout(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -280,7 +281,7 @@ func TestMultiplexTransportPeerFilterTimeout(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportPeerFilterDuplicate(t *testing.T) {
+func TestTransportMultiplexPeerFilterDuplicate(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -374,7 +375,7 @@ func TestMultiplexTransportPeerFilterDuplicate(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportAcceptMultiple(t *testing.T) {
+func TestTransportMultiplexAcceptMultiple(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -487,7 +488,7 @@ func TestMultiplexTransportAcceptMultiple(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportAcceptNonBlocking(t *testing.T) {
+func TestTransportMultiplexAcceptNonBlocking(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -609,7 +610,7 @@ func TestMultiplexTransportAcceptNonBlocking(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportValidateNodeInfo(t *testing.T) {
+func TestTransportMultiplexValidateNodeInfo(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -681,7 +682,7 @@ func TestMultiplexTransportValidateNodeInfo(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportRejectMissmatchID(t *testing.T) {
+func TestTransportMultiplexRejectMissmatchID(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -750,7 +751,7 @@ func TestMultiplexTransportRejectMissmatchID(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportRejectIncompatible(t *testing.T) {
+func TestTransportMultiplexRejectIncompatible(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -818,7 +819,7 @@ func TestMultiplexTransportRejectIncompatible(t *testing.T) {
 	}
 }
 
-func TestMultiplexTransportRejectSelf(t *testing.T) {
+func TestTransportMultiplexRejectSelf(t *testing.T) {
 	var (
 		pv = ed25519.GenPrivKey()
 		mt = NewMultiplexTransport(
@@ -883,6 +884,21 @@ func TestMultiplexTransportRejectSelf(t *testing.T) {
 	}
 }
 
+func TestTransportConnDuplicateIPFilter(t *testing.T) {
+	filter := ConnDuplicateIPFilter(&testTransportResolver{})
+
+	if err := filter(nil, &testTransportConn{}); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &testTransportConn{}
+	cs := map[string]net.Conn{c.RemoteAddr().String(): c}
+
+	if err := filter(cs, c); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTransportHandshake(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -936,4 +952,63 @@ func TestTransportHandshake(t *testing.T) {
 	if have, want := ni, peerNodeInfo; !reflect.DeepEqual(have, want) {
 		t.Errorf("have %v, want %v", have, want)
 	}
+}
+
+type testTransportAddr struct{}
+
+func (a *testTransportAddr) Network() string { return "tcp" }
+func (a *testTransportAddr) String() string  { return "test.local:1234" }
+
+type testTransportConn struct{}
+
+func (c *testTransportConn) Close() error {
+	return fmt.Errorf("Close() not implemented")
+}
+
+func (c *testTransportConn) LocalAddr() net.Addr {
+	return &testTransportAddr{}
+}
+
+func (c *testTransportConn) RemoteAddr() net.Addr {
+	return &testTransportAddr{}
+}
+
+func (c *testTransportConn) Read(_ []byte) (int, error) {
+	return -1, fmt.Errorf("Read() not implemented")
+}
+
+func (c *testTransportConn) SetDeadline(_ time.Time) error {
+	return fmt.Errorf("SetDeadline() not implemented")
+}
+
+func (c *testTransportConn) SetReadDeadline(_ time.Time) error {
+	return fmt.Errorf("SetReadDeadline() not implemented")
+}
+
+func (c *testTransportConn) SetWriteDeadline(_ time.Time) error {
+	return fmt.Errorf("SetWriteDeadline() not implemented")
+}
+
+func (c *testTransportConn) Write(_ []byte) (int, error) {
+	return -1, fmt.Errorf("Write() not implemented")
+}
+
+type testTransportResolver struct{}
+
+func (r *testTransportResolver) LookupIPAddr(
+	ctx context.Context,
+	host string,
+) ([]net.IPAddr, error) {
+
+	return []net.IPAddr{
+		{
+			IP: net.IP{10, 0, 10, 1},
+		},
+		{
+			IP: net.IP{10, 0, 10, 2},
+		},
+		{
+			IP: net.IP{10, 0, 10, 3},
+		},
+	}, nil
 }

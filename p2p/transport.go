@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -68,6 +69,61 @@ type ConnFilterFunc func(map[string]net.Conn, net.Conn) error
 // PeerFilterFunc to be implemented by filter hooks after a new Peer has been
 // fully setup.
 type PeerFilterFunc func(map[ID]Peer, Peer) error
+
+// IPResolver is a behaviour subset of net.Resolver.
+type IPResolver interface {
+	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
+}
+
+// ConnDuplicateIPFilter resolves and keeps all ips for an incoming connection
+// and refuses new ones if they come from a known ip.
+func ConnDuplicateIPFilter(resolver IPResolver) ConnFilterFunc {
+	im := map[string][]net.IP{}
+
+	return func(cs map[string]net.Conn, c net.Conn) error {
+		// Remove cached ips for dropped conns.
+		for addr := range im {
+			if _, ok := cs[addr]; !ok {
+				delete(im, addr)
+			}
+		}
+
+		// Resolve ips for incoming conn.
+		host, _, err := net.SplitHostPort(c.RemoteAddr().String())
+		if err != nil {
+			return err
+		}
+
+		addrs, err := resolver.LookupIPAddr(context.Background(), host)
+		if err != nil {
+			return err
+		}
+
+		newIPs := []net.IP{}
+
+		for _, addr := range addrs {
+			newIPs = append(newIPs, addr.IP)
+		}
+
+		for _, knownIPs := range im {
+			for _, known := range knownIPs {
+				for _, new := range newIPs {
+					if new.Equal(known) {
+						return &ErrRejected{
+							conn:        c,
+							err:         fmt.Errorf("IP<%v> already connected", new),
+							isDuplicate: true,
+						}
+					}
+				}
+			}
+		}
+
+		im[c.RemoteAddr().String()] = newIPs
+
+		return nil
+	}
+}
 
 // MultiplexTransportOption sets an optional parameter on the
 // MultiplexTransport.
