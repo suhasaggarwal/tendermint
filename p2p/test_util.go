@@ -3,6 +3,7 @@ package p2p
 import (
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	cmn "github.com/tendermint/tendermint/libs/common"
@@ -111,7 +112,25 @@ func (sw *Switch) addPeerWithConnection(conn net.Conn) error {
 		}
 		return err
 	}
-	if err = sw.addPeer(pc); err != nil {
+
+	ni, err := handshake(conn, 50*time.Millisecond, sw.nodeInfo)
+	if err != nil {
+		if err := conn.Close(); err != nil {
+			sw.Logger.Error("Error closing connection", "err", err)
+		}
+		return err
+	}
+
+	p := newPeer(
+		pc,
+		sw.mConfig,
+		ni,
+		sw.reactorsByCh,
+		sw.chDescs,
+		sw.StopPeerForError,
+	)
+
+	if err = sw.addPeer(p); err != nil {
 		pc.CloseConn()
 		return err
 	}
@@ -131,26 +150,48 @@ func StartSwitches(switches []*Switch) error {
 	return nil
 }
 
-func MakeSwitch(cfg *config.P2PConfig, i int, network, version string, initSwitch func(int, *Switch) *Switch) *Switch {
-	// new switch, add reactors
+func MakeSwitch(
+	cfg *config.P2PConfig,
+	i int,
+	network, version string,
+	initSwitch func(int, *Switch) *Switch,
+) *Switch {
+	var (
+		nodeKey = NodeKey{
+			PrivKey: ed25519.GenPrivKey(),
+		}
+		ni = NodeInfo{
+			ID:         nodeKey.ID(),
+			Moniker:    cmn.Fmt("switch%d", i),
+			Network:    network,
+			Version:    version,
+			ListenAddr: fmt.Sprintf("127.0.0.1:%d", cmn.RandIntn(64512)+1023),
+		}
+	)
+
+	addr, err := NewNetAddressStringWithOptionalID(
+		IDAddressString(nodeKey.ID(), ni.ListenAddr),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	t := NewMultiplexTransport(ni, nodeKey)
+
+	if err := t.Listen(*addr); err != nil {
+		panic(err)
+	}
+
 	// TODO: let the config be passed in?
-	nodeKey := &NodeKey{
-		PrivKey: ed25519.GenPrivKey(),
-	}
-	sw := NewSwitch(cfg)
-	sw.SetLogger(log.TestingLogger())
-	sw = initSwitch(i, sw)
-	ni := NodeInfo{
-		ID:         nodeKey.ID(),
-		Moniker:    cmn.Fmt("switch%d", i),
-		Network:    network,
-		Version:    version,
-		ListenAddr: fmt.Sprintf("127.0.0.1:%d", cmn.RandIntn(64512)+1023),
-	}
+	sw := initSwitch(i, NewSwitch(cfg, t))
+
 	for ch := range sw.reactorsByCh {
 		ni.Channels = append(ni.Channels, ch)
 	}
+
+	sw.SetLogger(log.TestingLogger())
 	sw.SetNodeInfo(ni)
-	sw.SetNodeKey(nodeKey)
+	sw.SetNodeKey(&nodeKey)
+
 	return sw
 }

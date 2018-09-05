@@ -21,49 +21,49 @@ type ErrRejected struct {
 
 func (e *ErrRejected) Error() string {
 	if e.isAuthFailure {
-		return fmt.Sprintf("rejected auth failure: %s", e.err)
+		return fmt.Sprintf("auth failure: %s", e.err)
 	}
 
 	if e.isDuplicate {
 		if e.conn != nil {
 			return fmt.Sprintf(
-				"rejected duplicate CONN<%s>: %s",
+				"duplicate CONN<%s>: %s",
 				e.conn.RemoteAddr().String(),
 				e.err,
 			)
 		}
 		if e.id != "" {
-			return fmt.Sprintf("rejected duplicate ID<%v>: %s", e.id, e.err)
+			return fmt.Sprintf("duplicate ID<%v>: %s", e.id, e.err)
 		}
 	}
 
 	if e.isFiltered {
 		if e.conn != nil {
 			return fmt.Sprintf(
-				"rejected filtered CONN<%s>: %s",
+				"filtered CONN<%s>: %s",
 				e.conn.RemoteAddr().String(),
 				e.err,
 			)
 		}
 
 		if e.id != "" {
-			return fmt.Sprintf("rejected filtered ID<%v>: %s", e.id, e.err)
+			return fmt.Sprintf("filtered ID<%v>: %s", e.id, e.err)
 		}
 	}
 
 	if e.isIncompatible {
-		return fmt.Sprintf("rejected incompatible: %s", e.err)
+		return fmt.Sprintf("incompatible: %s", e.err)
 	}
 
 	if e.isNodeInfoInvalid {
-		return fmt.Sprintf("rejected invalid NodeInof: %s", e.err)
+		return fmt.Sprintf("invalid NodeInfo: %s", e.err)
 	}
 
 	if e.isSelf {
-		return fmt.Sprintf("rejected self: %s", e.err)
+		return fmt.Sprintf("self ID<%v>", e.id)
 	}
 
-	return fmt.Sprintf("rejected: %s", e.err)
+	return fmt.Sprintf("%s", e.err)
 }
 
 // IsAuthFailure when Peer authentication was unsuccessful.

@@ -2,8 +2,6 @@ package p2p
 
 import (
 	"bytes"
-	"fmt"
-	"net"
 	"sync"
 	"testing"
 	"time"
@@ -11,10 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	"github.com/tendermint/tendermint/libs/log"
-
-	"github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/p2p/conn"
 )
 
@@ -151,35 +148,6 @@ func assertMsgReceivedWithTimeout(t *testing.T, msgBytes []byte, channel byte, r
 	}
 }
 
-func TestConnAddrFilter(t *testing.T) {
-	s1 := MakeSwitch(cfg, 1, "testing", "123.123.123", initSwitchFunc)
-	s2 := MakeSwitch(cfg, 1, "testing", "123.123.123", initSwitchFunc)
-	defer s1.Stop()
-	defer s2.Stop()
-
-	c1, c2 := conn.NetPipe()
-
-	s1.SetAddrFilter(func(addr net.Addr) error {
-		if addr.String() == c1.RemoteAddr().String() {
-			return fmt.Errorf("Error: pipe is blacklisted")
-		}
-		return nil
-	})
-
-	// connect to good peer
-	go func() {
-		err := s1.addPeerWithConnection(c1)
-		assert.NotNil(t, err, "expected err")
-	}()
-	go func() {
-		err := s2.addPeerWithConnection(c2)
-		assert.NotNil(t, err, "expected err")
-	}()
-
-	assertNoPeersAfterTimeout(t, s1, 400*time.Millisecond)
-	assertNoPeersAfterTimeout(t, s2, 400*time.Millisecond)
-}
-
 func TestSwitchFiltersOutItself(t *testing.T) {
 	s1 := MakeSwitch(cfg, 1, "127.0.0.1", "123.123.123", initSwitchFunc)
 	// addr := s1.NodeInfo().NetAddress()
@@ -194,7 +162,13 @@ func TestSwitchFiltersOutItself(t *testing.T) {
 	// addr should be rejected in addPeer based on the same ID
 	err := s1.DialPeerWithAddress(rp.Addr(), false)
 	if assert.Error(t, err) {
-		assert.Equal(t, ErrSwitchConnectToSelf{rp.Addr()}.Error(), err.Error())
+		if err, ok := err.(*ErrRejected); ok {
+			if !err.IsSelf() {
+				t.Errorf("expected self to be rejected")
+			}
+		} else {
+			t.Errorf("expected ErrRejected")
+		}
 	}
 
 	assert.True(t, s1.addrBook.OurAddress(rp.Addr()))
@@ -211,41 +185,6 @@ func assertNoPeersAfterTimeout(t *testing.T, sw *Switch, timeout time.Duration) 
 	if sw.Peers().Size() != 0 {
 		t.Fatalf("Expected %v to not connect to some peers, got %d", sw, sw.Peers().Size())
 	}
-}
-
-func TestConnIDFilter(t *testing.T) {
-	s1 := MakeSwitch(cfg, 1, "testing", "123.123.123", initSwitchFunc)
-	s2 := MakeSwitch(cfg, 1, "testing", "123.123.123", initSwitchFunc)
-	defer s1.Stop()
-	defer s2.Stop()
-
-	c1, c2 := conn.NetPipe()
-
-	s1.SetIDFilter(func(id ID) error {
-		if id == s2.nodeInfo.ID {
-			return fmt.Errorf("Error: pipe is blacklisted")
-		}
-		return nil
-	})
-
-	s2.SetIDFilter(func(id ID) error {
-		if id == s1.nodeInfo.ID {
-			return fmt.Errorf("Error: pipe is blacklisted")
-		}
-		return nil
-	})
-
-	go func() {
-		err := s1.addPeerWithConnection(c1)
-		assert.NotNil(t, err, "expected error")
-	}()
-	go func() {
-		err := s2.addPeerWithConnection(c2)
-		assert.NotNil(t, err, "expected error")
-	}()
-
-	assertNoPeersAfterTimeout(t, s1, 400*time.Millisecond)
-	assertNoPeersAfterTimeout(t, s2, 400*time.Millisecond)
 }
 
 func TestSwitchStopsNonPersistentPeerOnError(t *testing.T) {
@@ -265,7 +204,17 @@ func TestSwitchStopsNonPersistentPeerOnError(t *testing.T) {
 
 	pc, err := newOutboundPeerConn(rp.Addr(), cfg, false, sw.nodeKey.PrivKey)
 	require.Nil(err)
-	err = sw.addPeer(pc)
+
+	p := newPeer(
+		pc,
+		sw.mConfig,
+		sw.nodeInfo,
+		sw.reactorsByCh,
+		sw.chDescs,
+		sw.StopPeerForError,
+	)
+
+	err = sw.addPeer(p)
 	require.Nil(err)
 
 	peer := sw.Peers().Get(rp.ID())
@@ -297,7 +246,16 @@ func TestSwitchReconnectsToPersistentPeer(t *testing.T) {
 	//	sw.reactorsByCh, sw.chDescs, sw.StopPeerForError, sw.nodeKey.PrivKey,
 	require.Nil(err)
 
-	require.Nil(sw.addPeer(pc))
+	p := newPeer(
+		pc,
+		sw.mConfig,
+		sw.nodeInfo,
+		sw.reactorsByCh,
+		sw.chDescs,
+		sw.StopPeerForError,
+	)
+
+	require.Nil(sw.addPeer(p))
 
 	peer := sw.Peers().Get(rp.ID())
 	require.NotNil(peer)
