@@ -221,7 +221,7 @@ func (mt *MultiplexTransport) Accept(cfg peerConfig) (Peer, error) {
 
 		return p, mt.filterPeer(p)
 	case <-mt.closec:
-		return nil, errors.New("transport is closed")
+		return nil, &ErrTransportClosed{}
 	}
 }
 
@@ -328,6 +328,7 @@ func (mt *MultiplexTransport) cleanup(c net.Conn, id ID) error {
 }
 
 func (mt *MultiplexTransport) filterConn(c net.Conn) error {
+	// We acquire a single read lock for all filters.
 	mt.connsMux.RLock()
 
 	if _, ok := mt.conns[c.RemoteAddr().String()]; ok {
@@ -359,6 +360,7 @@ func (mt *MultiplexTransport) filterConn(c net.Conn) error {
 }
 
 func (mt *MultiplexTransport) filterPeer(p Peer) error {
+	// We acquire a single read lock for all filters.
 	mt.peersMux.RLock()
 
 	if _, ok := mt.peers[p.ID()]; ok {

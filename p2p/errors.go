@@ -126,6 +126,12 @@ func (e ErrSwitchAuthenticationFailure) Error() string {
 	)
 }
 
+type ErrTransportClosed struct{}
+
+func (e ErrTransportClosed) Error() string {
+	return "transport has been closed"
+}
+
 //-------------------------------------------------------------------
 
 type ErrNetAddressNoID struct {

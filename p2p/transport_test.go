@@ -891,11 +891,13 @@ func TestTransportConnDuplicateIPFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := &testTransportConn{}
-	cs := map[string]net.Conn{c.RemoteAddr().String(): c}
+	var (
+		c  = &testTransportConn{}
+		cs = map[string]net.Conn{c.RemoteAddr().String(): c}
+	)
 
-	if err := filter(cs, c); err != nil {
-		t.Fatal(err)
+	if err := filter(cs, c); err == nil {
+		t.Errorf("expected Peer to be rejected as duplicatge")
 	}
 }
 
