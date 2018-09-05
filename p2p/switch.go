@@ -25,10 +25,6 @@ const (
 	// ie. 3**10 = 16hrs
 	reconnectBackOffAttempts    = 10
 	reconnectBackOffBaseSeconds = 3
-
-	// keep at least this many outbound peers
-	// TODO: move to config
-	DefaultMinNumOutboundPeers = 10
 )
 
 //-----------------------------------------------------------------------------
@@ -246,6 +242,11 @@ func (sw *Switch) NumPeers() (outbound, inbound, dialing int) {
 	}
 	dialing = sw.dialing.Size()
 	return
+}
+
+// MaxNumOutboundPeers returns a maximum number of outbound peers.
+func (sw *Switch) MaxNumOutboundPeers() int {
+	return sw.config.MaxNumOutboundPeers
 }
 
 // Peers returns the set of peers that are connected to the switch.
@@ -477,15 +478,14 @@ func (sw *Switch) acceptRoutine() {
 			break
 		}
 
-		// Ignore Peer if we already have enough, but leave room for
-		// MinNumOutboundPeers;
-		maxPeers := sw.config.MaxNumPeers - DefaultMinNumOutboundPeers
-		if maxPeers <= sw.peers.Size() {
+		// Ignore connection if we already have enough peers.
+		_, in, _ := sw.NumPeers()
+		if in >= sw.config.MaxNumInboundPeers {
 			sw.Logger.Info(
 				"Ignoring inbound connection: already have enough peers",
 				"address", p.NodeInfo().NetAddress().String(),
-				"numPeers", sw.peers.Size(),
-				"max", maxPeers,
+				"have", in,
+				"max", sw.config.MaxNumInboundPeers,
 			)
 
 			_ = p.Stop()

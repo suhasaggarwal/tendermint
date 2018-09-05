@@ -109,6 +109,10 @@ func RandInt63n(n int64) int64 {
 	return grand.Int63n(n)
 }
 
+func RandBool() bool {
+	return grand.Bool()
+}
+
 func RandFloat32() float32 {
 	return grand.Float32()
 }
@@ -274,6 +278,13 @@ func (r *Rand) Intn(n int) int {
 	return i
 }
 
+// Bool returns a uniformly random boolean
+func (r *Rand) Bool() bool {
+	// See https://github.com/golang/go/issues/23804#issuecomment-365370418
+	// for reasoning behind computing like this
+	return r.Int63()%2 == 0
+}
+
 // Perm returns a pseudo-random permutation of n integers in [0, n).
 func (r *Rand) Perm(n int) []int {
 	r.Lock()
@@ -284,7 +295,7 @@ func (r *Rand) Perm(n int) []int {
 
 // NOTE: This relies on the os's random number generator.
 // For real security, we should salt that with some seed.
-// See github.com/tendermint/go-crypto for a more secure reader.
+// See github.com/tendermint/tendermint/crypto for a more secure reader.
 func cRandBytes(numBytes int) []byte {
 	b := make([]byte, numBytes)
 	_, err := crand.Read(b)

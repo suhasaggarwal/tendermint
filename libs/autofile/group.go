@@ -85,7 +85,6 @@ func OpenGroup(headPath string) (g *Group, err error) {
 		Head:           head,
 		headBuf:        bufio.NewWriterSize(head, 4096*10),
 		Dir:            dir,
-		ticker:         time.NewTicker(groupCheckDuration),
 		headSizeLimit:  defaultHeadSizeLimit,
 		totalSizeLimit: defaultTotalSizeLimit,
 		minIndex:       0,
@@ -102,6 +101,7 @@ func OpenGroup(headPath string) (g *Group, err error) {
 // OnStart implements Service by starting the goroutine that checks file and
 // group limits.
 func (g *Group) OnStart() error {
+	g.ticker = time.NewTicker(groupCheckDuration)
 	go g.processTicks()
 	return nil
 }
@@ -200,18 +200,14 @@ func (g *Group) Flush() error {
 
 func (g *Group) processTicks() {
 	for {
-		_, ok := <-g.ticker.C
-		if !ok {
-			return // Done.
+		select {
+		case <-g.ticker.C:
+			g.checkHeadSizeLimit()
+			g.checkTotalSizeLimit()
+		case <-g.Quit():
+			return
 		}
-		g.checkHeadSizeLimit()
-		g.checkTotalSizeLimit()
 	}
-}
-
-// NOTE: for testing
-func (g *Group) stopTicker() {
-	g.ticker.Stop()
 }
 
 // NOTE: this function is called manually in tests.
@@ -730,11 +726,11 @@ func (gr *GroupReader) SetIndex(index int) error {
 func MakeSimpleSearchFunc(prefix string, target int) SearchFunc {
 	return func(line string) (int, error) {
 		if !strings.HasPrefix(line, prefix) {
-			return -1, errors.New(cmn.Fmt("Marker line did not have prefix: %v", prefix))
+			return -1, fmt.Errorf("Marker line did not have prefix: %v", prefix)
 		}
 		i, err := strconv.Atoi(line[len(prefix):])
 		if err != nil {
-			return -1, errors.New(cmn.Fmt("Failed to parse marker line: %v", err.Error()))
+			return -1, fmt.Errorf("Failed to parse marker line: %v", err.Error())
 		}
 		if target < i {
 			return 1, nil

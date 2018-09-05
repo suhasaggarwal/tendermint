@@ -36,7 +36,7 @@ func CreateRandomPeer(outbound bool) *peer {
 func CreateRoutableAddr() (addr string, netAddr *NetAddress) {
 	for {
 		var err error
-		addr = cmn.Fmt("%X@%v.%v.%v.%v:26656", cmn.RandBytes(20), cmn.RandInt()%256, cmn.RandInt()%256, cmn.RandInt()%256, cmn.RandInt()%256)
+		addr = fmt.Sprintf("%X@%v.%v.%v.%v:26656", cmn.RandBytes(20), cmn.RandInt()%256, cmn.RandInt()%256, cmn.RandInt()%256, cmn.RandInt()%256)
 		netAddr, err = NewNetAddressString(addr)
 		if err != nil {
 			panic(err)
@@ -162,7 +162,7 @@ func MakeSwitch(
 		}
 		ni = NodeInfo{
 			ID:         nodeKey.ID(),
-			Moniker:    cmn.Fmt("switch%d", i),
+			Moniker:    fmt.Sprintf("switch%d", i),
 			Network:    network,
 			Version:    version,
 			ListenAddr: fmt.Sprintf("127.0.0.1:%d", cmn.RandIntn(64512)+1023),

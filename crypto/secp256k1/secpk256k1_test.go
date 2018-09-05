@@ -11,7 +11,7 @@ import (
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/crypto/secp256k1"
 
-	underlyingSecp256k1 "github.com/btcsuite/btcd/btcec"
+	underlyingSecp256k1 "github.com/tendermint/btcd/btcec"
 )
 
 type keyData struct {
@@ -59,9 +59,7 @@ func TestSignAndValidateSecp256k1(t *testing.T) {
 	assert.True(t, pubKey.VerifyBytes(msg, sig))
 
 	// Mutate the signature, just one bit.
-	sigEd := sig.(secp256k1.SignatureSecp256k1)
-	sigEd[3] ^= byte(0x01)
-	sig = sigEd
+	sig[3] ^= byte(0x01)
 
 	assert.False(t, pubKey.VerifyBytes(msg, sig))
 }

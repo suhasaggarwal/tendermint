@@ -2,11 +2,11 @@ package mock
 
 import (
 	abci "github.com/tendermint/tendermint/abci/types"
+	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/rpc/client"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 	"github.com/tendermint/tendermint/types"
 	"github.com/tendermint/tendermint/version"
-	cmn "github.com/tendermint/tendermint/libs/common"
 )
 
 // ABCIApp will send all abci related request to the named app,
@@ -23,7 +23,7 @@ var (
 )
 
 func (a ABCIApp) ABCIInfo() (*ctypes.ResultABCIInfo, error) {
-	return &ctypes.ResultABCIInfo{a.App.Info(abci.RequestInfo{version.Version})}, nil
+	return &ctypes.ResultABCIInfo{a.App.Info(abci.RequestInfo{Version: version.Version})}, nil
 }
 
 func (a ABCIApp) ABCIQuery(path string, data cmn.HexBytes) (*ctypes.ResultABCIQuery, error) {
@@ -31,7 +31,7 @@ func (a ABCIApp) ABCIQuery(path string, data cmn.HexBytes) (*ctypes.ResultABCIQu
 }
 
 func (a ABCIApp) ABCIQueryWithOptions(path string, data cmn.HexBytes, opts client.ABCIQueryOptions) (*ctypes.ResultABCIQuery, error) {
-	q := a.App.Query(abci.RequestQuery{data, path, opts.Height, opts.Trusted})
+	q := a.App.Query(abci.RequestQuery{Data: data, Path: path, Height: opts.Height, Prove: opts.Trusted})
 	return &ctypes.ResultABCIQuery{q}, nil
 }
 

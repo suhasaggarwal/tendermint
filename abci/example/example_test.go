@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"google.golang.org/grpc"
 
 	"golang.org/x/net/context"
@@ -37,13 +39,13 @@ func TestGRPC(t *testing.T) {
 }
 
 func testStream(t *testing.T, app types.Application) {
-	numDeliverTxs := 200000
+	numDeliverTxs := 20000
 
 	// Start the listener
 	server := abciserver.NewSocketServer("unix://test.sock", app)
 	server.SetLogger(log.TestingLogger().With("module", "abci-server"))
 	if err := server.Start(); err != nil {
-		t.Fatalf("Error starting socket server: %v", err.Error())
+		require.NoError(t, err, "Error starting socket server")
 	}
 	defer server.Stop()
 
@@ -70,7 +72,7 @@ func testStream(t *testing.T, app types.Application) {
 			}
 			if counter == numDeliverTxs {
 				go func() {
-					time.Sleep(time.Second * 2) // Wait for a bit to allow counter overflow
+					time.Sleep(time.Second * 1) // Wait for a bit to allow counter overflow
 					close(done)
 				}()
 				return
@@ -132,7 +134,7 @@ func testGRPCSync(t *testing.T, app *types.GRPCApplication) {
 	// Write requests
 	for counter := 0; counter < numDeliverTxs; counter++ {
 		// Send request
-		response, err := client.DeliverTx(context.Background(), &types.RequestDeliverTx{[]byte("test")})
+		response, err := client.DeliverTx(context.Background(), &types.RequestDeliverTx{Tx: []byte("test")})
 		if err != nil {
 			t.Fatalf("Error in GRPC DeliverTx: %v", err.Error())
 		}
@@ -146,7 +148,7 @@ func testGRPCSync(t *testing.T, app *types.GRPCApplication) {
 		t.Log("response", counter)
 		if counter == numDeliverTxs {
 			go func() {
-				time.Sleep(time.Second * 2) // Wait for a bit to allow counter overflow
+				time.Sleep(time.Second * 1) // Wait for a bit to allow counter overflow
 			}()
 		}
 

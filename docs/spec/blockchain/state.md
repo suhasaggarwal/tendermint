@@ -3,7 +3,7 @@
 ## State
 
 The state contains information whose cryptographic digest is included in block headers, and thus is
-necessary for validating new blocks. For instance, the set of validators and the results of
+necessary for validating new blocks. For instance, the validators set and the results of
 transactions are never included in blocks, but their Merkle roots are - the state keeps track of them.
 
 Note that the `State` object itself is an implementation detail, since it is never
@@ -11,15 +11,16 @@ included in a block or gossipped over the network, and we never compute
 its hash. However, the types it contains are part of the specification, since
 their Merkle roots are included in blocks.
 
-For details on an implementation of `State` with persistence, see TODO
+Details on an implementation of `State` with persistence is forthcoming, see [this issue](https://github.com/tendermint/tendermint/issues/1152)
 
 ```go
 type State struct {
     LastResults []Result
     AppHash []byte
 
-    Validators []Validator
     LastValidators []Validator
+    Validators []Validator
+    NextValidators []Validator
 
     ConsensusParams ConsensusParams
 }
@@ -74,7 +75,6 @@ func TotalVotingPower(vals []Validators) int64{
 }
 ```
 
-
 ### ConsensusParams
 
-TODO
+This section is forthcoming. See [this issue](https://github.com/tendermint/tendermint/issues/1152).
