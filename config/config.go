@@ -94,7 +94,6 @@ func (cfg *Config) SetRoot(root string) *Config {
 
 // BaseConfig defines the base configuration for a Tendermint node
 type BaseConfig struct {
-
 	// chainID is unexposed and immutable but here for convenience
 	chainID string
 
@@ -102,49 +101,49 @@ type BaseConfig struct {
 	// This should be set in viper so it can unmarshal into this struct
 	RootDir string `mapstructure:"home"`
 
-	// Path to the JSON file containing the initial validator set and other meta data
-	Genesis string `mapstructure:"genesis_file"`
-
-	// Path to the JSON file containing the private key to use as a validator in the consensus protocol
-	PrivValidator string `mapstructure:"priv_validator_file"`
-
-	// A JSON file containing the private key to use for p2p authenticated encryption
-	NodeKey string `mapstructure:"node_key_file"`
-
-	// A custom human readable name for this node
-	Moniker string `mapstructure:"moniker"`
-
-	// TCP or UNIX socket address for Tendermint to listen on for
-	// connections from an external PrivValidator process
-	PrivValidatorListenAddr string `mapstructure:"priv_validator_laddr"`
-
 	// TCP or UNIX socket address of the ABCI application,
 	// or the name of an ABCI application compiled in with the Tendermint binary
 	ProxyApp string `mapstructure:"proxy_app"`
 
-	// Mechanism to connect to the ABCI application: socket | grpc
-	ABCI string `mapstructure:"abci"`
-
-	// Output level for logging
-	LogLevel string `mapstructure:"log_level"`
-
-	// TCP or UNIX socket address for the profiling server to listen on
-	ProfListenAddress string `mapstructure:"prof_laddr"`
+	// A custom human readable name for this node
+	Moniker string `mapstructure:"moniker"`
 
 	// If this node is many blocks behind the tip of the chain, FastSync
 	// allows them to catchup quickly by downloading blocks in parallel
 	// and verifying their commits
 	FastSync bool `mapstructure:"fast_sync"`
 
-	// If true, query the ABCI app on connecting to a new peer
-	// so the app can decide if we should keep the connection or not
-	FilterPeers bool `mapstructure:"filter_peers"` // false
-
 	// Database backend: leveldb | memdb
 	DBBackend string `mapstructure:"db_backend"`
 
 	// Database directory
 	DBPath string `mapstructure:"db_dir"`
+
+	// Output level for logging
+	LogLevel string `mapstructure:"log_level"`
+
+	// Path to the JSON file containing the initial validator set and other meta data
+	Genesis string `mapstructure:"genesis_file"`
+
+	// Path to the JSON file containing the private key to use as a validator in the consensus protocol
+	PrivValidator string `mapstructure:"priv_validator_file"`
+
+	// TCP or UNIX socket address for Tendermint to listen on for
+	// connections from an external PrivValidator process
+	PrivValidatorListenAddr string `mapstructure:"priv_validator_laddr"`
+
+	// A JSON file containing the private key to use for p2p authenticated encryption
+	NodeKey string `mapstructure:"node_key_file"`
+
+	// Mechanism to connect to the ABCI application: socket | grpc
+	ABCI string `mapstructure:"abci"`
+
+	// TCP or UNIX socket address for the profiling server to listen on
+	ProfListenAddress string `mapstructure:"prof_laddr"`
+
+	// If true, query the ABCI app on connecting to a new peer
+	// so the app can decide if we should keep the connection or not
+	FilterPeers bool `mapstructure:"filter_peers"` // false
 }
 
 // DefaultBaseConfig returns a default base configuration for a Tendermint node
@@ -575,8 +574,8 @@ func (cfg *ConsensusConfig) SetWalFile(walFile string) {
 //-----------------------------------------------------------------------------
 // TxIndexConfig
 
-// TxIndexConfig defines the configuration for the transaction
-// indexer, including tags to index.
+// TxIndexConfig defines the configuration for the transaction indexer,
+// including tags to index.
 type TxIndexConfig struct {
 	// What indexer to use for transactions
 	//
@@ -585,16 +584,21 @@ type TxIndexConfig struct {
 	//   2) "kv" (default) - the simplest possible indexer, backed by key-value storage (defaults to levelDB; see DBBackend).
 	Indexer string `mapstructure:"indexer"`
 
-	// Comma-separated list of tags to index (by default the only tag is tx hash)
+	// Comma-separated list of tags to index (by default the only tag is "tx.hash")
 	//
+	// You can also index transactions by height by adding "tx.height" tag here.
+	// 
 	// It's recommended to index only a subset of tags due to possible memory
 	// bloat. This is, of course, depends on the indexer's DB and the volume of
 	// transactions.
 	IndexTags string `mapstructure:"index_tags"`
 
-	// When set to true, tells indexer to index all tags. Note this may be not
-	// desirable (see the comment above). IndexTags has a precedence over
-	// IndexAllTags (i.e. when given both, IndexTags will be indexed).
+	// When set to true, tells indexer to index all tags (predefined tags:
+	// "tx.hash", "tx.height" and all tags from DeliverTx responses). 
+	//	
+	// Note this may be not desirable (see the comment above). IndexTags has a
+	// precedence over IndexAllTags (i.e. when given both, IndexTags will be
+	// indexed).
 	IndexAllTags bool `mapstructure:"index_all_tags"`
 }
 

@@ -8,9 +8,9 @@ The Tendermint blockchains consists of a short list of basic data types:
 
 - `Block`
 - `Header`
-- `Vote`
 - `BlockID`
-- `Signature`
+- `Time`
+- `Vote`
 - `Evidence`
 
 ## Block
@@ -27,6 +27,13 @@ type Block struct {
 }
 ```
 
+The signatures returned along with block `X` are those validating block
+`X-1`. This can be a little confusing, but consider that
+the `Header` also contains the `LastCommitHash`. It would be impossible
+for a Header to include the commits that sign it, as it would cause an
+infinite loop here. But when we get block `X`, we find
+`Header.LastCommitHash`, which must match the hash of `LastCommit`.
+
 ## Header
 
 A block header contains metadata about the block and about the consensus, as well as commitments to
@@ -34,32 +41,30 @@ the data in the current block, the previous block, and the results returned by t
 
 ```go
 type Header struct {
-    // block metadata
-    Version             string  // Version string
-    ChainID             string  // ID of the chain
-    Height              int64   // Current block height
-    Time                int64   // UNIX time, in millisconds
+	// basic block info
+	ChainID  string
+	Height   int64
+	Time     time.Time
+	NumTxs   int64
+	TotalTxs int64
 
-    // current block
-    NumTxs              int64   // Number of txs in this block
-    TxHash              []byte  // SimpleMerkle of the block.Txs
-    LastCommitHash      []byte  // SimpleMerkle of the block.LastCommit
+	// prev block info
+	LastBlockID BlockID
 
-    // previous block
-    TotalTxs            int64   // prevBlock.TotalTxs + block.NumTxs
-    LastBlockID         BlockID // BlockID of prevBlock
+	// hashes of block data
+	LastCommitHash []byte // commit from validators from the last block
+	DataHash       []byte // Merkle root of transactions
 
-    // application
-    ResultsHash         []byte  // SimpleMerkle of []abci.Result from prevBlock
-    AppHash             []byte  // Arbitrary state digest
-    ValidatorsHash      []byte  // SimpleMerkle of the current ValidatorSet
-    NextValidatorsHash  []byte  // SimpleMerkle of the next ValidatorSet
-    ConsensusParamsHash []byte  // SimpleMerkle of the ConsensusParams
+	// hashes from the app output from the prev block
+	ValidatorsHash     []byte // validators for the current block
+	NextValidatorsHash []byte // validators for the next block
+	ConsensusHash      []byte // consensus params for current block
+	AppHash            []byte // state after txs from the previous block
+	LastResultsHash    []byte // root hash of all results from the txs from the previous block
 
-    // consensus
-    EvidenceHash        []byte  // SimpleMerkle of []Evidence
-    ProposerAddress     []byte  // Address of the original proposer of the block
-}
+	// consensus info
+	EvidenceHash    []byte // evidence included in the block
+	ProposerAddress []byte // original proposer of the block
 ```
 
 Further details on each of these fields is described below.
@@ -85,6 +90,16 @@ type PartsHeader struct {
 }
 ```
 
+## Time
+
+Tendermint uses the
+[Google.Protobuf.WellKnownTypes.Timestamp](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/timestamp)
+format, which uses two integers, one for Seconds and for Nanoseconds.
+
+TODO: clarify exact format and reconcile [this
+comment](https://github.com/tendermint/tendermint/blob/892b170818cd3be4cd3f919d72dde1ad60c28bbb/types/proto3/block.proto#L43).
+
+
 ## Vote
 
 A vote is a signed message from a validator for a particular block.
@@ -92,14 +107,14 @@ The vote includes information about the validator signing it.
 
 ```go
 type Vote struct {
-    Timestamp   int64
-    Address     []byte
-    Index       int
-    Height      int64
-    Round       int
-    Type        int8
-    BlockID     BlockID
-    Signature   Signature
+    ValidatorAddress    []byte
+    ValidatorIndex      int
+    Height              int64
+    Round               int
+    Timestamp           Time
+    Type                int8
+    BlockID             BlockID
+    Signature           []byte
 }
 ```
 
@@ -109,41 +124,9 @@ a _precommit_ has `vote.Type == 2`.
 
 ## Signature
 
-Tendermint allows for multiple signature schemes to be used by prepending a single type-byte
-to the signature bytes. Different signatures may also come with fixed or variable lengths.
-Currently, Tendermint supports Ed25519 and Secp256k1.
-
-### ED25519
-
-An ED25519 signature has `Type == 0x1`. It looks like:
-
-```go
-// Implements Signature
-type Ed25519Signature struct {
-    Type        int8        = 0x1
-    Signature   [64]byte
-}
-```
-
-where `Signature` is the 64 byte signature.
-
-### Secp256k1
-
-A `Secp256k1` signature has `Type == 0x2`. It looks like:
-
-```go
-// Implements Signature
-type Secp256k1Signature struct {
-    Type        int8        = 0x2
-    Signature   []byte
-}
-```
-
-where `Signature` is the DER encoded signature, ie:
-
-```hex
-0x30 <length of whole message> <0x02> <length of R> <R> 0x2 <length of S> <S>.
-```
+Signatures in Tendermint are raw bytes representing the underlying signature.
+The only signature scheme currently supported for Tendermint validators is
+ED25519. The signature is the raw 64-byte ED25519 signature.
 
 ## Evidence
 
@@ -224,6 +207,17 @@ These are the votes that committed the previous block.
 
 The first block has `block.Header.LastCommitHash == []byte{}`
 
+### DataHash
+
+The `DataHash` can provide a nice check on the
+[Data](https://godoc.org/github.com/tendermint/tendermint/types#Data)
+returned in this same block. If you are subscribed to new blocks, via
+tendermint RPC, in order to display or process the new transactions you
+should at least validate that the `DataHash` is valid. If it is
+important to verify autheniticity, you must wait for the `LastCommit`
+from the next block to make sure the block header (including `DataHash`)
+was properly signed.
+
 ### TotalTxs
 
 ```go
@@ -270,7 +264,7 @@ The first block has `block.Header.ResultsHash == []byte{}`.
 block.AppHash == state.AppHash
 ```
 
-Arbitrary byte array returned by the application after executing and commiting the previous block.
+Arbitrary byte array returned by the application after executing and commiting the previous block. It serves as the basis for validating any merkle proofs that comes from the ABCI application and represents the state of the actual application rather than the state of the blockchain itself.
 
 The first block has `block.Header.AppHash == []byte{}`.
 
