@@ -22,8 +22,8 @@ type ConsensusParams struct {
 
 // BlockSize contain limits on the block size.
 type BlockSize struct {
-	MaxBytes        int   `json:"max_txs_bytes"` // NOTE: must not be 0 nor greater than 100MB
-	MaxGas          int64 `json:"max_gas"`
+	MaxBytes int   `json:"max_txs_bytes"` // NOTE: must not be 0 nor greater than 100MB
+	MaxGas   int64 `json:"max_gas"`
 }
 
 // TxSize contain limits on the tx size.
@@ -55,8 +55,8 @@ func DefaultConsensusParams() *ConsensusParams {
 // DefaultBlockSize returns a default BlockSize.
 func DefaultBlockSize() BlockSize {
 	return BlockSize{
-		MaxBytes:        22020096, // 21MB
-		MaxGas:          -1,
+		MaxBytes: 22020096, // 21MB
+		MaxGas:   -1,
 	}
 }
 
