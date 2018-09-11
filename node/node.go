@@ -296,70 +296,6 @@ func NewNode(config *cfg.Config,
 	consensusReactor := cs.NewConsensusReactor(consensusState, fastSync)
 	consensusReactor.SetLogger(consensusLogger)
 
-	p2pLogger := logger.With("module", "p2p")
-
-	sw := p2p.NewSwitch(config.P2P, p2p.WithMetrics(p2pMetrics))
-	sw.SetLogger(p2pLogger)
-	sw.AddReactor("MEMPOOL", mempoolReactor)
-	sw.AddReactor("BLOCKCHAIN", bcReactor)
-	sw.AddReactor("CONSENSUS", consensusReactor)
-	sw.AddReactor("EVIDENCE", evidenceReactor)
-	p2pLogger.Info("P2P Node ID", "ID", nodeKey.ID(), "file", config.NodeKeyFile())
-
-	// Optionally, start the pex reactor
-	//
-	// TODO:
-	//
-	// We need to set Seeds and PersistentPeers on the switch,
-	// since it needs to be able to use these (and their DNS names)
-	// even if the PEX is off. We can include the DNS name in the NetAddress,
-	// but it would still be nice to have a clear list of the current "PersistentPeers"
-	// somewhere that we can return with net_info.
-	//
-	// If PEX is on, it should handle dialing the seeds. Otherwise the switch does it.
-	// Note we currently use the addrBook regardless at least for AddOurAddress
-	addrBook := pex.NewAddrBook(config.P2P.AddrBookFile(), config.P2P.AddrBookStrict)
-	addrBook.SetLogger(p2pLogger.With("book", config.P2P.AddrBookFile()))
-	if config.P2P.PexReactor {
-		// TODO persistent peers ? so we can have their DNS addrs saved
-		pexReactor := pex.NewPEXReactor(addrBook,
-			&pex.PEXReactorConfig{
-				Seeds:    splitAndTrimEmpty(config.P2P.Seeds, ",", " "),
-				SeedMode: config.P2P.SeedMode,
-			})
-		pexReactor.SetLogger(p2pLogger)
-		sw.AddReactor("PEX", pexReactor)
-	}
-
-	sw.SetAddrBook(addrBook)
-
-	// Filter peers by addr or pubkey with an ABCI query.
-	// If the query return code is OK, add peer.
-	// XXX: Query format subject to change
-	if config.FilterPeers {
-		// NOTE: addr is ip:port
-		sw.SetAddrFilter(func(addr net.Addr) error {
-			resQuery, err := proxyApp.Query().QuerySync(abci.RequestQuery{Path: fmt.Sprintf("/p2p/filter/addr/%s", addr.String())})
-			if err != nil {
-				return err
-			}
-			if resQuery.IsErr() {
-				return fmt.Errorf("Error querying abci app: %v", resQuery)
-			}
-			return nil
-		})
-		sw.SetIDFilter(func(id p2p.ID) error {
-			resQuery, err := proxyApp.Query().QuerySync(abci.RequestQuery{Path: fmt.Sprintf("/p2p/filter/id/%s", id)})
-			if err != nil {
-				return err
-			}
-			if resQuery.IsErr() {
-				return fmt.Errorf("Error querying abci app: %v", resQuery)
-			}
-			return nil
-		})
-	}
-
 	eventBus := types.NewEventBus()
 	eventBus.SetLogger(logger.With("module", "events"))
 
@@ -388,6 +324,114 @@ func NewNode(config *cfg.Config,
 
 	indexerService := txindex.NewIndexerService(txIndexer, eventBus)
 	indexerService.SetLogger(logger.With("module", "txindex"))
+
+	var (
+		p2pLogger = logger.With("module", "p2p")
+		nodeInfo  = makeNodeInfo(config, nodeKey.ID(), txIndexer, genDoc.ChainID)
+	)
+
+	// Setup Transport.
+	var (
+		transport   = p2p.NewMultiplexTransport(nodeInfo, *nodeKey)
+		connFilters = []p2p.ConnFilterFunc{}
+		peerFilters = []p2p.PeerFilterFunc{}
+	)
+
+	if !config.P2P.AllowDuplicateIP {
+		connFilters = append(
+			connFilters,
+			p2p.ConnDuplicateIPFilter(
+				net.DefaultResolver,
+			),
+		)
+	}
+
+	// Filter peers by addr or pubkey with an ABCI query.
+	// If the query return code is OK, add peer.
+	// XXX: Query format subject to change
+	if config.FilterPeers {
+		connFilters = append(
+			connFilters,
+			// ABCI query for address filtering.
+			func(_ map[string]net.Conn, c net.Conn) error {
+				res, err := proxyApp.Query().QuerySync(abci.RequestQuery{
+					Path: fmt.Sprintf("/p2p/filter/addr/%s", c.RemoteAddr().String()),
+				})
+				if err != nil {
+					return err
+				}
+				if res.IsErr() {
+					return fmt.Errorf("Error querying abci app: %v", res)
+				}
+
+				return nil
+			},
+		)
+
+		peerFilters = append(
+			peerFilters,
+			// ABCI query for ID filtering.
+			func(_ map[p2p.ID]p2p.Peer, p p2p.Peer) error {
+				res, err := proxyApp.Query().QuerySync(abci.RequestQuery{
+					Path: fmt.Sprintf("/p2p/filter/id/%s", p.ID()),
+				})
+				if err != nil {
+					return err
+				}
+				if res.IsErr() {
+					return fmt.Errorf("Error querying abci app: %v", res)
+				}
+
+				return nil
+			},
+		)
+	}
+
+	p2p.MultiplexTransportConnFilters(connFilters...)(transport)
+	p2p.MultiplexTransportPeerFilters(peerFilters...)(transport)
+
+	// Setup Switch.
+	sw := p2p.NewSwitch(config.P2P, transport, p2p.WithMetrics(p2pMetrics))
+	sw.SetLogger(p2pLogger)
+	sw.AddReactor("MEMPOOL", mempoolReactor)
+	sw.AddReactor("BLOCKCHAIN", bcReactor)
+	sw.AddReactor("CONSENSUS", consensusReactor)
+	sw.AddReactor("EVIDENCE", evidenceReactor)
+	sw.SetNodeInfo(nodeInfo)
+	sw.SetNodeKey(nodeKey)
+
+	p2pLogger.Info("P2P Node ID", "ID", nodeKey.ID(), "file", config.NodeKeyFile())
+
+	// Optionally, start the pex reactor
+	//
+	// TODO:
+	//
+	// We need to set Seeds and PersistentPeers on the switch,
+	// since it needs to be able to use these (and their DNS names)
+	// even if the PEX is off. We can include the DNS name in the NetAddress,
+	// but it would still be nice to have a clear list of the current "PersistentPeers"
+	// somewhere that we can return with net_info.
+	//
+	// If PEX is on, it should handle dialing the seeds. Otherwise the switch does it.
+	// Note we currently use the addrBook regardless at least for AddOurAddress
+	addrBook := pex.NewAddrBook(config.P2P.AddrBookFile(), config.P2P.AddrBookStrict)
+
+	// Add ourselves to addrbook to prevent dialing ourselves
+	addrBook.AddOurAddress(nodeInfo.NetAddress())
+
+	addrBook.SetLogger(p2pLogger.With("book", config.P2P.AddrBookFile()))
+	if config.P2P.PexReactor {
+		// TODO persistent peers ? so we can have their DNS addrs saved
+		pexReactor := pex.NewPEXReactor(addrBook,
+			&pex.PEXReactorConfig{
+				Seeds:    splitAndTrimEmpty(config.P2P.Seeds, ",", " "),
+				SeedMode: config.P2P.SeedMode,
+			})
+		pexReactor.SetLogger(p2pLogger)
+		sw.AddReactor("PEX", pexReactor)
+	}
+
+	sw.SetAddrBook(addrBook)
 
 	// run the profile server
 	profileHost := config.ProfListenAddress
@@ -436,13 +480,6 @@ func (n *Node) OnStart() error {
 		n.config.P2P.UPNP,
 		n.Logger.With("module", "p2p"))
 	n.sw.AddListener(l)
-
-	nodeInfo := n.makeNodeInfo(n.nodeKey.ID())
-	n.sw.SetNodeInfo(nodeInfo)
-	n.sw.SetNodeKey(n.nodeKey)
-
-	// Add ourselves to addrbook to prevent dialing ourselves
-	n.addrBook.AddOurAddress(nodeInfo.NetAddress())
 
 	// Add private IDs to addrbook to block those peers being added
 	n.addrBook.AddPrivateIDs(splitAndTrimEmpty(n.config.P2P.PrivatePeerIDs, ",", " "))
@@ -671,14 +708,26 @@ func (n *Node) ProxyApp() proxy.AppConns {
 	return n.proxyApp
 }
 
-func (n *Node) makeNodeInfo(nodeID p2p.ID) p2p.NodeInfo {
+//------------------------------------------------------------------------------
+
+// NodeInfo returns the Node's Info from the Switch.
+func (n *Node) NodeInfo() p2p.NodeInfo {
+	return n.sw.NodeInfo()
+}
+
+func makeNodeInfo(
+	config *cfg.Config,
+	nodeID p2p.ID,
+	txIndexer txindex.TxIndexer,
+	chainID string,
+) p2p.NodeInfo {
 	txIndexerStatus := "on"
-	if _, ok := n.txIndexer.(*null.TxIndex); ok {
+	if _, ok := txIndexer.(*null.TxIndex); ok {
 		txIndexerStatus = "off"
 	}
 	nodeInfo := p2p.NodeInfo{
 		ID:      nodeID,
-		Network: n.genesisDoc.ChainID,
+		Network: chainId,
 		Version: version.Version,
 		Channels: []byte{
 			bc.BlockchainChannel,
@@ -696,11 +745,11 @@ func (n *Node) makeNodeInfo(nodeID p2p.ID) p2p.NodeInfo {
 		},
 	}
 
-	if n.config.P2P.PexReactor {
+	if config.P2P.PexReactor {
 		nodeInfo.Channels = append(nodeInfo.Channels, pex.PexChannel)
 	}
 
-	rpcListenAddr := n.config.RPC.ListenAddress
+	rpcListenAddr := config.RPC.ListenAddress
 	nodeInfo.Other = append(nodeInfo.Other, fmt.Sprintf("rpc_addr=%v", rpcListenAddr))
 
 	if !n.sw.IsListening() {
@@ -713,13 +762,6 @@ func (n *Node) makeNodeInfo(nodeID p2p.ID) p2p.NodeInfo {
 	nodeInfo.ListenAddr = fmt.Sprintf("%v:%v", p2pHost, p2pPort)
 
 	return nodeInfo
-}
-
-//------------------------------------------------------------------------------
-
-// NodeInfo returns the Node's Info from the Switch.
-func (n *Node) NodeInfo() p2p.NodeInfo {
-	return n.sw.NodeInfo()
 }
 
 //------------------------------------------------------------------------------
@@ -750,7 +792,6 @@ func saveGenesisDoc(db dbm.DB, genDoc *types.GenesisDoc) {
 	}
 	db.SetSync(genesisDocKey, bytes)
 }
-
 
 // splitAndTrimEmpty slices s into all subslices separated by sep and returns a
 // slice of the string s with all leading and trailing Unicode code points
