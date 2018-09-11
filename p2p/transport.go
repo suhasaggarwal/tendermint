@@ -36,7 +36,11 @@ type accept struct {
 }
 
 // peerConfig is used to bundle data we need to fully setup a Peer with an
-// MConn, provided by the caller of Accept and Dial.
+// MConn, provided by the caller of Accept and Dial (currently the Switch). This
+// a temporary measure until reactor setup is less dynamic and we introduce the
+// concept of PeerBehaviour to communicate about significant Peer lifecycle
+// events.
+// TODO(xla): Refactor out with more static Reactor setup and PeerBehaviour.
 type peerConfig struct {
 	chDescs              []*conn.ChannelDescriptor
 	onPeerError          func(Peer, interface{})
