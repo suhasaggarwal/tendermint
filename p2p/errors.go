@@ -126,6 +126,7 @@ func (e ErrSwitchAuthenticationFailure) Error() string {
 	)
 }
 
+// ErrTransportClosed is raised when the Transport has been closed.
 type ErrTransportClosed struct{}
 
 func (e ErrTransportClosed) Error() string {
