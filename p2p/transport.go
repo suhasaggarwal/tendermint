@@ -158,14 +158,17 @@ func MultiplexTransportPeerFilters(
 // MultiplexTransport accepts and dials tcp connections and upgrades them to
 // multiplexed peers.
 type MultiplexTransport struct {
+	// TODO(xla): Support multiple listeners.
 	listener net.Listener
 
 	acceptc chan accept
 	closec  chan struct{}
 
 	// Lookup table for duplicate ip and id checks.
+	// TODO(xla): Consider implement ConnSet, to remove locking from transport.
 	conns    map[string]net.Conn
 	connsMux sync.RWMutex
+	// TODO(xla): Use PeerSet.
 	peers    map[ID]Peer
 	peersMux sync.RWMutex
 
@@ -190,7 +193,7 @@ type MultiplexTransport struct {
 var _ Transport = (*MultiplexTransport)(nil)
 var _ transportLifecycle = (*MultiplexTransport)(nil)
 
-// NewMultiplexTransport returns a tcp conencted multiplexed peers.
+// NewMultiplexTransport returns a tcp connected multiplexed peer.
 func NewMultiplexTransport(
 	nodeInfo NodeInfo,
 	nodeKey NodeKey,
@@ -282,7 +285,7 @@ func (mt *MultiplexTransport) acceptPeers() {
 	for {
 		c, err := mt.listener.Accept()
 		if err != nil {
-			// Close has been called so we silently exit.
+			// If Close() has been called, silently exit.
 			if _, ok := <-mt.closec; !ok {
 				return
 			}
@@ -333,6 +336,7 @@ func (mt *MultiplexTransport) cleanup(c net.Conn, id ID) error {
 
 func (mt *MultiplexTransport) filterConn(c net.Conn) error {
 	// We acquire a single read lock for all filters.
+	// XXX(xla): Replace locking madness with concurrent datastructures (PeerSet).
 	mt.connsMux.RLock()
 
 	if _, ok := mt.conns[c.RemoteAddr().String()]; ok {
@@ -365,6 +369,7 @@ func (mt *MultiplexTransport) filterConn(c net.Conn) error {
 
 func (mt *MultiplexTransport) filterPeer(p Peer) error {
 	// We acquire a single read lock for all filters.
+	// XXX(xla): Replace locking madness with concurrent datastructures (PeerSet).
 	mt.peersMux.RLock()
 
 	if _, ok := mt.peers[p.ID()]; ok {
