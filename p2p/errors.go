@@ -19,7 +19,7 @@ type ErrRejected struct {
 	isSelf            bool
 }
 
-func (e *ErrRejected) Error() string {
+func (e ErrRejected) Error() string {
 	if e.isAuthFailure {
 		return fmt.Sprintf("auth failure: %s", e.err)
 	}
@@ -67,22 +67,22 @@ func (e *ErrRejected) Error() string {
 }
 
 // IsAuthFailure when Peer authentication was unsuccessful.
-func (e *ErrRejected) IsAuthFailure() bool { return e.isAuthFailure }
+func (e ErrRejected) IsAuthFailure() bool { return e.isAuthFailure }
 
 // IsDuplicate when Peer ID or IP are present already.
-func (e *ErrRejected) IsDuplicate() bool { return e.isDuplicate }
+func (e ErrRejected) IsDuplicate() bool { return e.isDuplicate }
 
 // IsFiltered when Peer ID or IP was filtered.
-func (e *ErrRejected) IsFiltered() bool { return e.isFiltered }
+func (e ErrRejected) IsFiltered() bool { return e.isFiltered }
 
 // IsIncompatible when Peer NodeInfo is not compatible with our own.
-func (e *ErrRejected) IsIncompatible() bool { return e.isIncompatible }
+func (e ErrRejected) IsIncompatible() bool { return e.isIncompatible }
 
 // IsNodeInfoInvalid when the sent NodeInfo is not valid.
-func (e *ErrRejected) IsNodeInfoInvalid() bool { return e.isNodeInfoInvalid }
+func (e ErrRejected) IsNodeInfoInvalid() bool { return e.isNodeInfoInvalid }
 
 // IsSelf when Peer is our own node.
-func (e *ErrRejected) IsSelf() bool { return e.isSelf }
+func (e ErrRejected) IsSelf() bool { return e.isSelf }
 
 // ErrSwitchDuplicatePeerID to be raised when a peer is connecting with a known
 // ID.

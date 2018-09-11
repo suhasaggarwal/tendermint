@@ -109,7 +109,7 @@ func ConnDuplicateIPFilter(resolver IPResolver) ConnFilterFunc {
 			for _, known := range knownIPs {
 				for _, new := range newIPs {
 					if new.Equal(known) {
-						return &ErrRejected{
+						return ErrRejected{
 							conn:        c,
 							err:         fmt.Errorf("IP<%v> already connected", new),
 							isDuplicate: true,
@@ -332,7 +332,7 @@ func (mt *MultiplexTransport) filterConn(c net.Conn) error {
 	mt.connsMux.RLock()
 
 	if _, ok := mt.conns[c.RemoteAddr().String()]; ok {
-		return &ErrRejected{conn: c, isDuplicate: true}
+		return ErrRejected{conn: c, isDuplicate: true}
 	}
 
 	for _, f := range mt.connFilters {
@@ -344,7 +344,7 @@ func (mt *MultiplexTransport) filterConn(c net.Conn) error {
 
 		select {
 		case err := <-errc:
-			return &ErrRejected{conn: c, err: err, isFiltered: true}
+			return ErrRejected{conn: c, err: err, isFiltered: true}
 		case <-time.After(mt.filterTimeout):
 			return ErrTransportFilterTimeout
 		}
@@ -364,7 +364,7 @@ func (mt *MultiplexTransport) filterPeer(p Peer) error {
 	mt.peersMux.RLock()
 
 	if _, ok := mt.peers[p.ID()]; ok {
-		return &ErrRejected{id: p.ID(), isDuplicate: true}
+		return ErrRejected{id: p.ID(), isDuplicate: true}
 	}
 
 	for _, f := range mt.peerFilters {
@@ -376,7 +376,7 @@ func (mt *MultiplexTransport) filterPeer(p Peer) error {
 
 		select {
 		case err := <-errc:
-			return &ErrRejected{err: err, id: p.ID(), isFiltered: true}
+			return ErrRejected{err: err, id: p.ID(), isFiltered: true}
 		case <-time.After(mt.filterTimeout):
 			return ErrTransportFilterTimeout
 		}
@@ -402,7 +402,7 @@ func (mt *MultiplexTransport) upgrade(
 
 	sc, err = secretConn(c, mt.handshakeTimeout, mt.nodeKey.PrivKey)
 	if err != nil {
-		return nil, NodeInfo{}, &ErrRejected{
+		return nil, NodeInfo{}, ErrRejected{
 			conn:          c,
 			err:           fmt.Errorf("secrect conn failed: %v", err),
 			isAuthFailure: true,
@@ -411,7 +411,7 @@ func (mt *MultiplexTransport) upgrade(
 
 	ni, err = handshake(sc, mt.handshakeTimeout, mt.nodeInfo)
 	if err != nil {
-		return nil, NodeInfo{}, &ErrRejected{
+		return nil, NodeInfo{}, ErrRejected{
 			conn:          c,
 			err:           fmt.Errorf("handshake failed: %v", err),
 			isAuthFailure: true,
@@ -419,7 +419,7 @@ func (mt *MultiplexTransport) upgrade(
 	}
 
 	if err := ni.Validate(); err != nil {
-		return nil, NodeInfo{}, &ErrRejected{
+		return nil, NodeInfo{}, ErrRejected{
 			conn:              c,
 			err:               err,
 			isNodeInfoInvalid: true,
@@ -428,7 +428,7 @@ func (mt *MultiplexTransport) upgrade(
 
 	// Ensure connection key matches self reported key.
 	if connID := PubKeyToID(sc.RemotePubKey()); connID != ni.ID {
-		return nil, NodeInfo{}, &ErrRejected{
+		return nil, NodeInfo{}, ErrRejected{
 			conn: c,
 			id:   connID,
 			err: fmt.Errorf(
@@ -442,11 +442,11 @@ func (mt *MultiplexTransport) upgrade(
 
 	// Reject self.
 	if mt.nodeInfo.ID == ni.ID {
-		return nil, NodeInfo{}, &ErrRejected{conn: c, id: ni.ID, isSelf: true}
+		return nil, NodeInfo{}, ErrRejected{conn: c, id: ni.ID, isSelf: true}
 	}
 
 	if err := mt.nodeInfo.CompatibleWith(ni); err != nil {
-		return nil, NodeInfo{}, &ErrRejected{
+		return nil, NodeInfo{}, ErrRejected{
 			conn:           c,
 			err:            err,
 			id:             ni.ID,

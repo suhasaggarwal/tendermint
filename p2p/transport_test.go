@@ -62,7 +62,7 @@ func TestTransportMultiplexConnFilter(t *testing.T) {
 	}
 
 	_, err = mt.Accept(peerConfig{})
-	if err, ok := err.(*ErrRejected); ok {
+	if err, ok := err.(ErrRejected); ok {
 		if !err.IsFiltered() {
 			t.Errorf("expected peer to be filtered")
 		}
@@ -196,7 +196,7 @@ func TestTransportMultiplexPeerFilter(t *testing.T) {
 	}
 
 	_, err = mt.Accept(peerConfig{})
-	if err, ok := err.(*ErrRejected); ok {
+	if err, ok := err.(ErrRejected); ok {
 		if !err.IsFiltered() {
 			t.Errorf("expected peer to be filtered")
 		}
@@ -366,7 +366,7 @@ func TestTransportMultiplexPeerFilterDuplicate(t *testing.T) {
 	}
 
 	_, err = mt.Accept(peerConfig{})
-	if err, ok := err.(*ErrRejected); ok {
+	if err, ok := err.(ErrRejected); ok {
 		if !err.IsDuplicate() {
 			t.Errorf("expected peer to be duplicate")
 		}
@@ -673,7 +673,7 @@ func TestTransportMultiplexValidateNodeInfo(t *testing.T) {
 	}
 
 	_, err = mt.Accept(peerConfig{})
-	if err, ok := err.(*ErrRejected); ok {
+	if err, ok := err.(ErrRejected); ok {
 		if !err.IsNodeInfoInvalid() {
 			t.Errorf("expected NodeInfo to be invalid")
 		}
@@ -742,7 +742,7 @@ func TestTransportMultiplexRejectMissmatchID(t *testing.T) {
 	}
 
 	_, err = mt.Accept(peerConfig{})
-	if err, ok := err.(*ErrRejected); ok {
+	if err, ok := err.(ErrRejected); ok {
 		if !err.IsAuthFailure() {
 			t.Errorf("expected auth failure")
 		}
@@ -810,7 +810,7 @@ func TestTransportMultiplexRejectIncompatible(t *testing.T) {
 	}()
 
 	_, err = mt.Accept(peerConfig{})
-	if err, ok := err.(*ErrRejected); ok {
+	if err, ok := err.(ErrRejected); ok {
 		if !err.IsIncompatible() {
 			t.Errorf("expected to reject incompatible")
 		}
@@ -863,7 +863,7 @@ func TestTransportMultiplexRejectSelf(t *testing.T) {
 	}()
 
 	if err := <-errc; err != nil {
-		if err, ok := err.(*ErrRejected); ok {
+		if err, ok := err.(ErrRejected); ok {
 			if !err.IsSelf() {
 				t.Errorf("expected to reject self")
 			}
@@ -875,7 +875,7 @@ func TestTransportMultiplexRejectSelf(t *testing.T) {
 	}
 
 	_, err = mt.Accept(peerConfig{})
-	if err, ok := err.(*ErrRejected); ok {
+	if err, ok := err.(ErrRejected); ok {
 		if !err.IsSelf() {
 			t.Errorf("expected to reject self")
 		}

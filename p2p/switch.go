@@ -448,8 +448,8 @@ func (sw *Switch) acceptRoutine() {
 		})
 		if err != nil {
 			switch err.(type) {
-			case *ErrRejected:
-				rErr := err.(*ErrRejected)
+			case ErrRejected:
+				rErr := err.(ErrRejected)
 
 				if rErr.IsSelf() {
 					// Remove the given address from the address book and add to our addresses
@@ -528,7 +528,7 @@ func (sw *Switch) addOutboundPeerWithConfig(
 	})
 	if err != nil {
 		switch e := err.(type) {
-		case *ErrRejected:
+		case ErrRejected:
 			if e.IsSelf() {
 				// Remove the given address from the address book and add to our addresses
 				// to avoid dialing in the future.
