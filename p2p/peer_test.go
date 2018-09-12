@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"fmt"
 	golog "log"
 	"net"
 	"testing"
@@ -76,7 +77,7 @@ func createOutboundPeerAndPerformHandshake(
 	}
 	reactorsByCh := map[byte]Reactor{testCh: NewTestReactor(chDescs, true)}
 	pk := ed25519.GenPrivKey()
-	pc, err := newOutboundPeerConn(addr, config, false, pk)
+	pc, err := testOutboundPeerConn(addr, config, false, pk)
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +95,87 @@ func createOutboundPeerAndPerformHandshake(
 	p := newPeer(pc, mConfig, nodeInfo, reactorsByCh, chDescs, func(p Peer, r interface{}) {})
 	p.SetLogger(log.TestingLogger().With("peer", addr))
 	return p, nil
+}
+
+func testDial(addr *NetAddress, cfg *config.P2PConfig) (net.Conn, error) {
+	if cfg.TestDialFail {
+		return nil, fmt.Errorf("dial err (peerConfig.DialFail == true)")
+	}
+
+	conn, err := addr.DialTimeout(cfg.DialTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+func testInboundPeerConn(
+	conn net.Conn,
+	config *config.P2PConfig,
+	ourNodePrivKey crypto.PrivKey,
+) (peerConn, error) {
+	return testPeerConn(conn, config, false, false, ourNodePrivKey, nil)
+}
+
+func testOutboundPeerConn(
+	addr *NetAddress,
+	config *config.P2PConfig,
+	persistent bool,
+	ourNodePrivKey crypto.PrivKey,
+) (peerConn, error) {
+	conn, err := testDial(addr, config)
+	if err != nil {
+		return peerConn{}, cmn.ErrorWrap(err, "Error creating peer")
+	}
+
+	pc, err := testPeerConn(conn, config, true, persistent, ourNodePrivKey, addr)
+	if err != nil {
+		if cerr := conn.Close(); cerr != nil {
+			return peerConn{}, cmn.ErrorWrap(err, cerr.Error())
+		}
+		return peerConn{}, err
+	}
+
+	// ensure dialed ID matches connection ID
+	if addr.ID != pc.ID() {
+		if cerr := conn.Close(); cerr != nil {
+			return peerConn{}, cmn.ErrorWrap(err, cerr.Error())
+		}
+		return peerConn{}, ErrSwitchAuthenticationFailure{addr, pc.ID()}
+	}
+
+	return pc, nil
+}
+
+func testPeerConn(
+	rawConn net.Conn,
+	cfg *config.P2PConfig,
+	outbound, persistent bool,
+	ourNodePrivKey crypto.PrivKey,
+	originalAddr *NetAddress,
+) (pc peerConn, err error) {
+	conn := rawConn
+
+	// Fuzz connection
+	if cfg.TestFuzz {
+		// so we have time to do peer handshakes and get set up
+		conn = FuzzConnAfterFromConfig(conn, 10*time.Second, cfg.TestFuzzConfig)
+	}
+
+	// Encrypt connection
+	conn, err = secretConn(conn, cfg.HandshakeTimeout, ourNodePrivKey)
+	if err != nil {
+		return pc, cmn.ErrorWrap(err, "Error creating peer")
+	}
+
+	// Only the information we already have
+	return peerConn{
+		config:       cfg,
+		outbound:     outbound,
+		persistent:   persistent,
+		conn:         conn,
+		originalAddr: originalAddr,
+	}, nil
 }
 
 type remotePeer struct {
@@ -143,7 +225,8 @@ func (rp *remotePeer) accept(l net.Listener) {
 			golog.Fatalf("Failed to accept conn: %+v", err)
 		}
 
-		pc, err := newInboundPeerConn(conn, rp.Config, rp.PrivKey)
+		pc, err := testInboundPeerConn(conn, rp.Config, rp.PrivKey)
+
 		if err != nil {
 			golog.Fatalf("Failed to create a peer: %+v", err)
 		}

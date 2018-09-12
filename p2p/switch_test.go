@@ -202,7 +202,7 @@ func TestSwitchStopsNonPersistentPeerOnError(t *testing.T) {
 	rp.Start()
 	defer rp.Stop()
 
-	pc, err := newOutboundPeerConn(rp.Addr(), cfg, false, sw.nodeKey.PrivKey)
+	pc, err := testOutboundPeerConn(rp.Addr(), cfg, false, sw.nodeKey.PrivKey)
 	require.Nil(err)
 
 	p := newPeer(
@@ -242,7 +242,7 @@ func TestSwitchReconnectsToPersistentPeer(t *testing.T) {
 	rp.Start()
 	defer rp.Stop()
 
-	pc, err := newOutboundPeerConn(rp.Addr(), cfg, true, sw.nodeKey.PrivKey)
+	pc, err := testOutboundPeerConn(rp.Addr(), cfg, true, sw.nodeKey.PrivKey)
 	//	sw.reactorsByCh, sw.chDescs, sw.StopPeerForError, sw.nodeKey.PrivKey,
 	require.Nil(err)
 
