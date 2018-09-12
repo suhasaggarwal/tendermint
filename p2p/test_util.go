@@ -5,6 +5,7 @@ import (
 	"net"
 	"time"
 
+	crypto "github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/libs/log"
@@ -194,4 +195,43 @@ func MakeSwitch(
 	sw.SetNodeKey(&nodeKey)
 
 	return sw
+}
+
+func testInboundPeerConn(
+	conn net.Conn,
+	config *config.P2PConfig,
+	ourNodePrivKey crypto.PrivKey,
+) (peerConn, error) {
+	return testPeerConn(conn, config, false, false, ourNodePrivKey, nil)
+}
+
+func testPeerConn(
+	rawConn net.Conn,
+	cfg *config.P2PConfig,
+	outbound, persistent bool,
+	ourNodePrivKey crypto.PrivKey,
+	originalAddr *NetAddress,
+) (pc peerConn, err error) {
+	conn := rawConn
+
+	// Fuzz connection
+	if cfg.TestFuzz {
+		// so we have time to do peer handshakes and get set up
+		conn = FuzzConnAfterFromConfig(conn, 10*time.Second, cfg.TestFuzzConfig)
+	}
+
+	// Encrypt connection
+	conn, err = secretConn(conn, cfg.HandshakeTimeout, ourNodePrivKey)
+	if err != nil {
+		return pc, cmn.ErrorWrap(err, "Error creating peer")
+	}
+
+	// Only the information we already have
+	return peerConn{
+		config:       cfg,
+		outbound:     outbound,
+		persistent:   persistent,
+		conn:         conn,
+		originalAddr: originalAddr,
+	}, nil
 }

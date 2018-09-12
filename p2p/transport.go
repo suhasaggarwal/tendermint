@@ -158,7 +158,6 @@ func MultiplexTransportPeerFilters(
 // MultiplexTransport accepts and dials tcp connections and upgrades them to
 // multiplexed peers.
 type MultiplexTransport struct {
-	// TODO(xla): Support multiple listeners.
 	listener net.Listener
 
 	acceptc chan accept

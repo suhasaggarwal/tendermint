@@ -109,14 +109,6 @@ func testDial(addr *NetAddress, cfg *config.P2PConfig) (net.Conn, error) {
 	return conn, nil
 }
 
-func testInboundPeerConn(
-	conn net.Conn,
-	config *config.P2PConfig,
-	ourNodePrivKey crypto.PrivKey,
-) (peerConn, error) {
-	return testPeerConn(conn, config, false, false, ourNodePrivKey, nil)
-}
-
 func testOutboundPeerConn(
 	addr *NetAddress,
 	config *config.P2PConfig,
@@ -145,37 +137,6 @@ func testOutboundPeerConn(
 	}
 
 	return pc, nil
-}
-
-func testPeerConn(
-	rawConn net.Conn,
-	cfg *config.P2PConfig,
-	outbound, persistent bool,
-	ourNodePrivKey crypto.PrivKey,
-	originalAddr *NetAddress,
-) (pc peerConn, err error) {
-	conn := rawConn
-
-	// Fuzz connection
-	if cfg.TestFuzz {
-		// so we have time to do peer handshakes and get set up
-		conn = FuzzConnAfterFromConfig(conn, 10*time.Second, cfg.TestFuzzConfig)
-	}
-
-	// Encrypt connection
-	conn, err = secretConn(conn, cfg.HandshakeTimeout, ourNodePrivKey)
-	if err != nil {
-		return pc, cmn.ErrorWrap(err, "Error creating peer")
-	}
-
-	// Only the information we already have
-	return peerConn{
-		config:       cfg,
-		outbound:     outbound,
-		persistent:   persistent,
-		conn:         conn,
-		originalAddr: originalAddr,
-	}, nil
 }
 
 type remotePeer struct {
