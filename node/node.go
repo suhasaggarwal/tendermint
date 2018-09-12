@@ -124,9 +124,12 @@ type Node struct {
 	privValidator types.PrivValidator // local node's validator key
 
 	// network
-	sw       *p2p.Switch  // p2p connections
-	addrBook pex.AddrBook // known peers
-	nodeKey  *p2p.NodeKey // our node privkey
+	transport   *p2p.MultiplexTransport
+	sw          *p2p.Switch  // p2p connections
+	addrBook    pex.AddrBook // known peers
+	nodeInfo    p2p.NodeInfo
+	nodeKey     *p2p.NodeKey // our node privkey
+	isListening bool
 
 	// services
 	eventBus         *types.EventBus // pub/sub for services
@@ -446,9 +449,11 @@ func NewNode(config *cfg.Config,
 		genesisDoc:    genDoc,
 		privValidator: privValidator,
 
-		sw:       sw,
-		addrBook: addrBook,
-		nodeKey:  nodeKey,
+		transport: transport,
+		sw:        sw,
+		addrBook:  addrBook,
+		nodeInfo:  nodeInfo,
+		nodeKey:   nodeKey,
 
 		stateDB:          stateDB,
 		blockStore:       blockStore,
@@ -473,14 +478,6 @@ func (n *Node) OnStart() error {
 		return err
 	}
 
-	// Create & add listener
-	l := p2p.NewDefaultListener(
-		n.config.P2P.ListenAddress,
-		n.config.P2P.ExternalAddress,
-		n.config.P2P.UPNP,
-		n.Logger.With("module", "p2p"))
-	n.sw.AddListener(l)
-
 	// Add private IDs to addrbook to block those peers being added
 	n.addrBook.AddPrivateIDs(splitAndTrimEmpty(n.config.P2P.PrivatePeerIDs, ",", " "))
 
@@ -498,6 +495,17 @@ func (n *Node) OnStart() error {
 		n.config.Instrumentation.PrometheusListenAddr != "" {
 		n.prometheusSrv = n.startPrometheusServer(n.config.Instrumentation.PrometheusListenAddr)
 	}
+
+	// Start the transport.
+	addr, err := p2p.NewNetAddressStringWithOptionalID(n.config.P2P.ListenAddress)
+	if err != nil {
+		return err
+	}
+	if err := n.transport.Listen(*addr); err != nil {
+		return err
+	}
+
+	n.isListening = true
 
 	// Start the switch (the P2P server).
 	err = n.sw.Start()
@@ -531,6 +539,12 @@ func (n *Node) OnStop() {
 	// TODO: gracefully disconnect from peers.
 	n.sw.Stop()
 
+	if err := n.transport.Close(); err != nil {
+		n.Logger.Error("Error closing transport", "err", err)
+	}
+
+	n.isListening = false
+
 	// finally stop the listeners / external services
 	for _, l := range n.rpcListeners {
 		n.Logger.Info("Closing rpc listener", "listener", l)
@@ -561,13 +575,6 @@ func (n *Node) RunForever() {
 	})
 }
 
-// AddListener adds a listener to accept inbound peer connections.
-// It should be called before starting the Node.
-// The first listener is the primary listener (in NodeInfo)
-func (n *Node) AddListener(l p2p.Listener) {
-	n.sw.AddListener(l)
-}
-
 // ConfigureRPC sets all variables in rpccore so they will serve
 // rpc calls from this node
 func (n *Node) ConfigureRPC() {
@@ -576,7 +583,8 @@ func (n *Node) ConfigureRPC() {
 	rpccore.SetConsensusState(n.consensusState)
 	rpccore.SetMempool(n.mempoolReactor.Mempool)
 	rpccore.SetEvidencePool(n.evidencePool)
-	rpccore.SetSwitch(n.sw)
+	rpccore.SetP2PPeers(n.sw)
+	rpccore.SetP2PTransport(n)
 	rpccore.SetPubKey(n.privValidator.GetPubKey())
 	rpccore.SetGenesisDoc(n.genesisDoc)
 	rpccore.SetAddrBook(n.addrBook)
@@ -710,9 +718,19 @@ func (n *Node) ProxyApp() proxy.AppConns {
 
 //------------------------------------------------------------------------------
 
+func (n *Node) Listeners() []string {
+	return []string{
+		fmt.Sprintf("Listener(@%v)", n.config.P2P.ExternalAddress),
+	}
+}
+
+func (n *Node) IsListening() bool {
+	return n.isListening
+}
+
 // NodeInfo returns the Node's Info from the Switch.
 func (n *Node) NodeInfo() p2p.NodeInfo {
-	return n.sw.NodeInfo()
+	return n.nodeInfo
 }
 
 func makeNodeInfo(
@@ -727,7 +745,7 @@ func makeNodeInfo(
 	}
 	nodeInfo := p2p.NodeInfo{
 		ID:      nodeID,
-		Network: chainId,
+		Network: chainID,
 		Version: version.Version,
 		Channels: []byte{
 			bc.BlockchainChannel,
@@ -735,7 +753,7 @@ func makeNodeInfo(
 			mempl.MempoolChannel,
 			evidence.EvidenceChannel,
 		},
-		Moniker: n.config.Moniker,
+		Moniker: config.Moniker,
 		Other: []string{
 			fmt.Sprintf("amino_version=%v", amino.Version),
 			fmt.Sprintf("p2p_version=%v", p2p.Version),
@@ -750,16 +768,11 @@ func makeNodeInfo(
 	}
 
 	rpcListenAddr := config.RPC.ListenAddress
-	nodeInfo.Other = append(nodeInfo.Other, fmt.Sprintf("rpc_addr=%v", rpcListenAddr))
-
-	if !n.sw.IsListening() {
-		return nodeInfo
-	}
-
-	p2pListener := n.sw.Listeners()[0]
-	p2pHost := p2pListener.ExternalAddressHost()
-	p2pPort := p2pListener.ExternalAddress().Port
-	nodeInfo.ListenAddr = fmt.Sprintf("%v:%v", p2pHost, p2pPort)
+	nodeInfo.Other = append(
+		nodeInfo.Other,
+		fmt.Sprintf("rpc_addr=%v", rpcListenAddr),
+	)
+	nodeInfo.ListenAddr = config.P2P.ExternalAddress
 
 	return nodeInfo
 }
