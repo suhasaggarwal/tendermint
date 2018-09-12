@@ -772,7 +772,14 @@ func makeNodeInfo(
 		nodeInfo.Other,
 		fmt.Sprintf("rpc_addr=%v", rpcListenAddr),
 	)
-	nodeInfo.ListenAddr = config.P2P.ExternalAddress
+
+	lAddr := config.P2P.ExternalAddress
+
+	if lAddr == "" {
+		lAddr = config.P2P.ListenAddress
+	}
+
+	nodeInfo.ListenAddr = lAddr
 
 	return nodeInfo
 }
