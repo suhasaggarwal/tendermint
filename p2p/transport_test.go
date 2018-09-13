@@ -1,7 +1,6 @@
 package p2p
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -23,9 +22,9 @@ func TestTransportMultiplexConnFilter(t *testing.T) {
 	)
 
 	MultiplexTransportConnFilters(
-		func(_ map[string]net.Conn, _ net.Conn) error { return nil },
-		func(_ map[string]net.Conn, _ net.Conn) error { return nil },
-		func(_ map[string]net.Conn, _ net.Conn) error {
+		func(_ ConnSet, _ net.Conn, _ []net.IP) error { return nil },
+		func(_ ConnSet, _ net.Conn, _ []net.IP) error { return nil },
+		func(_ ConnSet, _ net.Conn, _ []net.IP) error {
 			return fmt.Errorf("rejected")
 		},
 	)(mt)
@@ -81,7 +80,7 @@ func TestTransportMultiplexConnFilterTimeout(t *testing.T) {
 
 	MultiplexTransportFilterTimeout(5 * time.Millisecond)(mt)
 	MultiplexTransportConnFilters(
-		func(_ map[string]net.Conn, _ net.Conn) error {
+		func(_ ConnSet, _ net.Conn, _ []net.IP) error {
 			time.Sleep(10 * time.Millisecond)
 			return nil
 		},
@@ -885,19 +884,27 @@ func TestTransportMultiplexRejectSelf(t *testing.T) {
 }
 
 func TestTransportConnDuplicateIPFilter(t *testing.T) {
-	filter := ConnDuplicateIPFilter(&testTransportResolver{})
+	filter := ConnDuplicateIPFilter()
 
-	if err := filter(nil, &testTransportConn{}); err != nil {
+	if err := filter(nil, &testTransportConn{}, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	var (
 		c  = &testTransportConn{}
-		cs = map[string]net.Conn{c.RemoteAddr().String(): c}
+		cs = NewConnSet()
 	)
 
-	if err := filter(cs, c); err == nil {
-		t.Errorf("expected Peer to be rejected as duplicatge")
+	cs.Set(c, []net.IP{
+		net.IP{10, 0, 10, 1},
+		net.IP{10, 0, 10, 2},
+		net.IP{10, 0, 10, 3},
+	})
+
+	if err := filter(cs, c, []net.IP{
+		net.IP{10, 0, 10, 2},
+	}); err == nil {
+		t.Errorf("expected Peer to be rejected as duplicate")
 	}
 }
 
@@ -993,24 +1000,4 @@ func (c *testTransportConn) SetWriteDeadline(_ time.Time) error {
 
 func (c *testTransportConn) Write(_ []byte) (int, error) {
 	return -1, fmt.Errorf("Write() not implemented")
-}
-
-type testTransportResolver struct{}
-
-func (r *testTransportResolver) LookupIPAddr(
-	ctx context.Context,
-	host string,
-) ([]net.IPAddr, error) {
-
-	return []net.IPAddr{
-		{
-			IP: net.IP{10, 0, 10, 1},
-		},
-		{
-			IP: net.IP{10, 0, 10, 2},
-		},
-		{
-			IP: net.IP{10, 0, 10, 3},
-		},
-	}, nil
 }

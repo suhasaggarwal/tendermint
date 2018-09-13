@@ -27,6 +27,11 @@ var (
 	ErrTransportFilterTimeout = errors.New("peer filter timeout")
 )
 
+// IPResolver is a behaviour subset of net.Resolver.
+type IPResolver interface {
+	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
+}
+
 // accept is the container to carry the upgraded connection and NodeInfo from an
 // asynchronously running routine to the Accept method.
 type accept struct {
@@ -67,63 +72,27 @@ type transportLifecycle interface {
 }
 
 // ConnFilterFunc to be implemented by filter hooks after a new connection has
-// been established.
-type ConnFilterFunc func(map[string]net.Conn, net.Conn) error
+// been established. The set of exisiting connections is passed along together
+// with all resolved IPs for the new connection.
+type ConnFilterFunc func(ConnSet, net.Conn, []net.IP) error
 
 // PeerFilterFunc to be implemented by filter hooks after a new Peer has been
 // fully setup.
 type PeerFilterFunc func(map[ID]Peer, Peer) error
 
-// IPResolver is a behaviour subset of net.Resolver.
-type IPResolver interface {
-	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
-}
-
 // ConnDuplicateIPFilter resolves and keeps all ips for an incoming connection
 // and refuses new ones if they come from a known ip.
-func ConnDuplicateIPFilter(resolver IPResolver) ConnFilterFunc {
-	im := map[string][]net.IP{}
-
-	return func(cs map[string]net.Conn, c net.Conn) error {
-		// Remove cached ips for dropped conns.
-		for addr := range im {
-			if _, ok := cs[addr]; !ok {
-				delete(im, addr)
-			}
-		}
-
-		// Resolve ips for incoming conn.
-		host, _, err := net.SplitHostPort(c.RemoteAddr().String())
-		if err != nil {
-			return err
-		}
-
-		addrs, err := resolver.LookupIPAddr(context.Background(), host)
-		if err != nil {
-			return err
-		}
-
-		newIPs := []net.IP{}
-
-		for _, addr := range addrs {
-			newIPs = append(newIPs, addr.IP)
-		}
-
-		for _, knownIPs := range im {
-			for _, known := range knownIPs {
-				for _, new := range newIPs {
-					if new.Equal(known) {
-						return ErrRejected{
-							conn:        c,
-							err:         fmt.Errorf("IP<%v> already connected", new),
-							isDuplicate: true,
-						}
-					}
+func ConnDuplicateIPFilter() ConnFilterFunc {
+	return func(cs ConnSet, c net.Conn, ips []net.IP) error {
+		for _, ip := range ips {
+			if cs.HasIP(ip) {
+				return ErrRejected{
+					conn:        c,
+					err:         fmt.Errorf("IP<%v> already connected", ip),
+					isDuplicate: true,
 				}
 			}
 		}
-
-		im[c.RemoteAddr().String()] = newIPs
 
 		return nil
 	}
@@ -155,6 +124,12 @@ func MultiplexTransportPeerFilters(
 	return func(mt *MultiplexTransport) { mt.peerFilters = filters }
 }
 
+// MultiplexTransportResolver sets the Resolver used for ip lokkups, defaults to
+// net.DefaultResolver.
+func MultiplexTransportResolver(resolver IPResolver) MultiplexTransportOption {
+	return func(mt *MultiplexTransport) { mt.resolver = resolver }
+}
+
 // MultiplexTransport accepts and dials tcp connections and upgrades them to
 // multiplexed peers.
 type MultiplexTransport struct {
@@ -164,12 +139,13 @@ type MultiplexTransport struct {
 	closec  chan struct{}
 
 	// Lookup table for duplicate ip and id checks.
-	// TODO(xla): Consider implement ConnSet, to remove locking from transport.
-	conns    map[string]net.Conn
-	connsMux sync.RWMutex
+	conns       ConnSet
+	connFilters []ConnFilterFunc
+
 	// TODO(xla): Use PeerSet.
-	peers    map[ID]Peer
-	peersMux sync.RWMutex
+	peers       map[ID]Peer
+	peersMux    sync.RWMutex
+	peerFilters []PeerFilterFunc
 
 	dialTimeout      time.Duration
 	filterTimeout    time.Duration
@@ -177,9 +153,7 @@ type MultiplexTransport struct {
 	nodeAddr         NetAddress
 	nodeInfo         NodeInfo
 	nodeKey          NodeKey
-
-	connFilters []ConnFilterFunc
-	peerFilters []PeerFilterFunc
+	resolver         IPResolver
 
 	// TODO(xla): Those configs are still needed as we parameterise peerConn and
 	// peer currently. All relevant configuration should be refactored into options
@@ -206,8 +180,9 @@ func NewMultiplexTransport(
 		mConfig:          conn.DefaultMConnConfig(),
 		nodeInfo:         nodeInfo,
 		nodeKey:          nodeKey,
-		conns:            map[string]net.Conn{},
+		conns:            NewConnSet(),
 		peers:            map[ID]Peer{},
+		resolver:         net.DefaultResolver,
 	}
 }
 
@@ -322,9 +297,7 @@ func (mt *MultiplexTransport) acceptPeers() {
 }
 
 func (mt *MultiplexTransport) cleanup(c net.Conn, id ID) error {
-	mt.connsMux.Lock()
-	delete(mt.conns, c.RemoteAddr().String())
-	mt.connsMux.Unlock()
+	mt.conns.Remove(c)
 
 	mt.peersMux.Lock()
 	delete(mt.peers, id)
@@ -334,34 +307,38 @@ func (mt *MultiplexTransport) cleanup(c net.Conn, id ID) error {
 }
 
 func (mt *MultiplexTransport) filterConn(c net.Conn) error {
-	// We acquire a single read lock for all filters.
-	// XXX(xla): Replace locking madness with concurrent datastructures (PeerSet).
-	mt.connsMux.RLock()
-
-	if _, ok := mt.conns[c.RemoteAddr().String()]; ok {
+	// Reject if connection is already present.
+	if mt.conns.Has(c) {
 		return ErrRejected{conn: c, isDuplicate: true}
 	}
 
+	// Resolve ips for incoming conn.
+	ips, err := resolveIPs(mt.resolver, c)
+	if err != nil {
+		return err
+	}
+
+	errc := make(chan error, len(mt.connFilters))
+
 	for _, f := range mt.connFilters {
-		errc := make(chan error)
+		go func(f ConnFilterFunc, c net.Conn, ips []net.IP, errc chan<- error) {
+			errc <- f(mt.conns, c, ips)
+		}(f, c, ips, errc)
+	}
 
-		go func(f ConnFilterFunc, c net.Conn, errc chan<- error) {
-			errc <- f(mt.conns, c)
-		}(f, c, errc)
-
+	for i := 0; i < cap(errc); i++ {
 		select {
 		case err := <-errc:
-			return ErrRejected{conn: c, err: err, isFiltered: true}
+			if err != nil {
+				return ErrRejected{conn: c, err: err, isFiltered: true}
+			}
 		case <-time.After(mt.filterTimeout):
 			return ErrTransportFilterTimeout
 		}
+
 	}
 
-	mt.connsMux.RUnlock()
-
-	mt.connsMux.Lock()
-	mt.conns[c.RemoteAddr().String()] = c
-	mt.connsMux.Unlock()
+	mt.conns.Set(c, ips)
 
 	return nil
 }
@@ -545,6 +522,26 @@ func secretConn(
 	}
 
 	return sc, sc.SetDeadline(time.Time{})
+}
+
+func resolveIPs(resolver IPResolver, c net.Conn) ([]net.IP, error) {
+	host, _, err := net.SplitHostPort(c.RemoteAddr().String())
+	if err != nil {
+		return nil, err
+	}
+
+	addrs, err := resolver.LookupIPAddr(context.Background(), host)
+	if err != nil {
+		return nil, err
+	}
+
+	ips := []net.IP{}
+
+	for _, addr := range addrs {
+		ips = append(ips, addr.IP)
+	}
+
+	return ips, nil
 }
 
 // multiplexPeer is the Peer implementation returned by the multiplexTransport
