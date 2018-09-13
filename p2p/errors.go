@@ -5,6 +5,13 @@ import (
 	"net"
 )
 
+// ErrFilterTimeout indicates that a filter operation timed out.
+type ErrFilterTimeout struct{}
+
+func (e ErrFilterTimeout) Error() string {
+	return "filter timed out"
+}
+
 // ErrRejected indicates that a Peer was rejected carrying additional
 // information as to the reason.
 type ErrRejected struct {

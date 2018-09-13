@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sync"
 	"time"
-
-	"github.com/pkg/errors"
 
 	"github.com/tendermint/tendermint/config"
 	crypto "github.com/tendermint/tendermint/crypto"
@@ -20,11 +17,6 @@ const (
 	defaultDialTimeout      = time.Second
 	defaultFilterTimeout    = 5 * time.Second
 	defaultHandshakeTimeout = 3 * time.Second
-)
-
-// Transport-level errors.
-var (
-	ErrTransportFilterTimeout = errors.New("peer filter timeout")
 )
 
 // IPResolver is a behaviour subset of net.Resolver.
@@ -76,10 +68,6 @@ type transportLifecycle interface {
 // with all resolved IPs for the new connection.
 type ConnFilterFunc func(ConnSet, net.Conn, []net.IP) error
 
-// PeerFilterFunc to be implemented by filter hooks after a new Peer has been
-// fully setup.
-type PeerFilterFunc func(map[ID]Peer, Peer) error
-
 // ConnDuplicateIPFilter resolves and keeps all ips for an incoming connection
 // and refuses new ones if they come from a known ip.
 func ConnDuplicateIPFilter() ConnFilterFunc {
@@ -117,13 +105,6 @@ func MultiplexTransportFilterTimeout(
 	return func(mt *MultiplexTransport) { mt.filterTimeout = timeout }
 }
 
-// MultiplexTransportPeerFilters sets the filters for rejection of new peers.
-func MultiplexTransportPeerFilters(
-	filters ...PeerFilterFunc,
-) MultiplexTransportOption {
-	return func(mt *MultiplexTransport) { mt.peerFilters = filters }
-}
-
 // MultiplexTransportResolver sets the Resolver used for ip lokkups, defaults to
 // net.DefaultResolver.
 func MultiplexTransportResolver(resolver IPResolver) MultiplexTransportOption {
@@ -141,11 +122,6 @@ type MultiplexTransport struct {
 	// Lookup table for duplicate ip and id checks.
 	conns       ConnSet
 	connFilters []ConnFilterFunc
-
-	// TODO(xla): Use PeerSet.
-	peers       map[ID]Peer
-	peersMux    sync.RWMutex
-	peerFilters []PeerFilterFunc
 
 	dialTimeout      time.Duration
 	filterTimeout    time.Duration
@@ -181,7 +157,6 @@ func NewMultiplexTransport(
 		nodeInfo:         nodeInfo,
 		nodeKey:          nodeKey,
 		conns:            NewConnSet(),
-		peers:            map[ID]Peer{},
 		resolver:         net.DefaultResolver,
 	}
 }
@@ -198,9 +173,7 @@ func (mt *MultiplexTransport) Accept(cfg peerConfig) (Peer, error) {
 
 		cfg.outbound = false
 
-		p := mt.wrapPeer(a.conn, a.nodeInfo, cfg)
-
-		return p, mt.filterPeer(p)
+		return mt.wrapPeer(a.conn, a.nodeInfo, cfg), nil
 	case <-mt.closec:
 		return nil, &ErrTransportClosed{}
 	}
@@ -230,7 +203,7 @@ func (mt *MultiplexTransport) Dial(
 
 	p := mt.wrapPeer(sc, ni, cfg)
 
-	return p, mt.filterPeer(p)
+	return p, nil
 }
 
 // Close implements transportLifecycle.
@@ -299,10 +272,6 @@ func (mt *MultiplexTransport) acceptPeers() {
 func (mt *MultiplexTransport) cleanup(c net.Conn, id ID) error {
 	mt.conns.Remove(c)
 
-	mt.peersMux.Lock()
-	delete(mt.peers, id)
-	mt.peersMux.Unlock()
-
 	return c.Close()
 }
 
@@ -333,45 +302,12 @@ func (mt *MultiplexTransport) filterConn(c net.Conn) error {
 				return ErrRejected{conn: c, err: err, isFiltered: true}
 			}
 		case <-time.After(mt.filterTimeout):
-			return ErrTransportFilterTimeout
+			return ErrFilterTimeout{}
 		}
 
 	}
 
 	mt.conns.Set(c, ips)
-
-	return nil
-}
-
-func (mt *MultiplexTransport) filterPeer(p Peer) error {
-	// We acquire a single read lock for all filters.
-	// XXX(xla): Replace locking madness with concurrent datastructures (PeerSet).
-	mt.peersMux.RLock()
-
-	if _, ok := mt.peers[p.ID()]; ok {
-		return ErrRejected{id: p.ID(), isDuplicate: true}
-	}
-
-	for _, f := range mt.peerFilters {
-		errc := make(chan error)
-
-		go func(f PeerFilterFunc, p Peer, errc chan<- error) {
-			errc <- f(mt.peers, p)
-		}(f, p, errc)
-
-		select {
-		case err := <-errc:
-			return ErrRejected{err: err, id: p.ID(), isFiltered: true}
-		case <-time.After(mt.filterTimeout):
-			return ErrTransportFilterTimeout
-		}
-	}
-
-	mt.peersMux.RUnlock()
-
-	mt.peersMux.Lock()
-	mt.peers[p.ID()] = p
-	mt.peersMux.Unlock()
 
 	return nil
 }

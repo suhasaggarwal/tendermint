@@ -341,12 +341,7 @@ func NewNode(config *cfg.Config,
 	)
 
 	if !config.P2P.AllowDuplicateIP {
-		connFilters = append(
-			connFilters,
-			p2p.ConnDuplicateIPFilter(
-				net.DefaultResolver,
-			),
-		)
+		connFilters = append(connFilters, p2p.ConnDuplicateIPFilter())
 	}
 
 	// Filter peers by addr or pubkey with an ABCI query.
@@ -356,7 +351,7 @@ func NewNode(config *cfg.Config,
 		connFilters = append(
 			connFilters,
 			// ABCI query for address filtering.
-			func(_ map[string]net.Conn, c net.Conn) error {
+			func(_ p2p.ConnSet, c net.Conn, _ []net.IP) error {
 				res, err := proxyApp.Query().QuerySync(abci.RequestQuery{
 					Path: fmt.Sprintf("/p2p/filter/addr/%s", c.RemoteAddr().String()),
 				})
@@ -391,10 +386,14 @@ func NewNode(config *cfg.Config,
 	}
 
 	p2p.MultiplexTransportConnFilters(connFilters...)(transport)
-	p2p.MultiplexTransportPeerFilters(peerFilters...)(transport)
 
 	// Setup Switch.
-	sw := p2p.NewSwitch(config.P2P, transport, p2p.WithMetrics(p2pMetrics))
+	sw := p2p.NewSwitch(
+		config.P2P,
+		transport,
+		p2p.WithMetrics(p2pMetrics),
+		p2p.SwitchPeerFilters(peerFilters...),
+	)
 	sw.SetLogger(p2pLogger)
 	sw.AddReactor("MEMPOOL", mempoolReactor)
 	sw.AddReactor("BLOCKCHAIN", bcReactor)

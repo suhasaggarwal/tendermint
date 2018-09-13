@@ -41,6 +41,10 @@ type AddrBook interface {
 	Save()
 }
 
+// PeerFilterFunc to be implemented by filter hooks after a new Peer has been
+// fully setup.
+type PeerFilterFunc func(map[ID]Peer, Peer) error
+
 //-----------------------------------------------------------------------------
 
 // Switch handles peer connections and exposes an API to receive incoming messages
@@ -63,6 +67,9 @@ type Switch struct {
 
 	transport Transport
 
+	filterTimeout time.Duration
+	peerFilters   []PeerFilterFunc
+
 	mConfig conn.MConnConfig
 
 	rng *cmn.Rand // seed for randomizing dial times and orders
@@ -80,15 +87,16 @@ func NewSwitch(
 	options ...SwitchOption,
 ) *Switch {
 	sw := &Switch{
-		config:       cfg,
-		reactors:     make(map[string]Reactor),
-		chDescs:      make([]*conn.ChannelDescriptor, 0),
-		reactorsByCh: make(map[byte]Reactor),
-		peers:        NewPeerSet(),
-		dialing:      cmn.NewCMap(),
-		reconnecting: cmn.NewCMap(),
-		metrics:      NopMetrics(),
-		transport:    transport,
+		config:        cfg,
+		reactors:      make(map[string]Reactor),
+		chDescs:       make([]*conn.ChannelDescriptor, 0),
+		reactorsByCh:  make(map[byte]Reactor),
+		peers:         NewPeerSet(),
+		dialing:       cmn.NewCMap(),
+		reconnecting:  cmn.NewCMap(),
+		metrics:       NopMetrics(),
+		transport:     transport,
+		filterTimeout: defaultFilterTimeout,
 	}
 
 	// Ensure we have a completely undeterministic PRNG.
@@ -109,6 +117,16 @@ func NewSwitch(
 	}
 
 	return sw
+}
+
+// SwitchFilterTimeout sets the timeout used for peer filters.
+func SwitchFilterTimeout(timeout time.Duration) SwitchOption {
+	return func(sw *Switch) { sw.filterTimeout = timeout }
+}
+
+// SwitchPeerFilters sets the filters for rejection of new peers.
+func SwitchPeerFilters(filters ...PeerFilterFunc) SwitchOption {
+	return func(sw *Switch) { sw.peerFilters = filters }
 }
 
 // WithMetrics sets the metrics.
@@ -552,11 +570,37 @@ func (sw *Switch) addOutboundPeerWithConfig(
 	return nil
 }
 
-// addPeer starts up the Peer and adds it to the Switch.
-func (sw *Switch) addPeer(p Peer) error {
+func (sw *Switch) filterPeer(p Peer) error {
 	// Avoid duplicate
 	if sw.peers.Has(p.ID()) {
-		return ErrSwitchDuplicatePeerID{p.ID()}
+		return ErrRejected{id: p.ID(), isDuplicate: true}
+	}
+
+	errc := make(chan error, len(sw.peerFilters))
+
+	for _, f := range sw.peerFilters {
+		go func(f PeerFilterFunc, p Peer, errc chan<- error) {
+		}(f, p, errc)
+	}
+
+	for i := 0; i < cap(errc); i++ {
+		select {
+		case err := <-errc:
+			if err != nil {
+				return ErrRejected{id: p.ID(), err: err, isFiltered: true}
+			}
+		case <-time.After(sw.filterTimeout):
+			return ErrFilterTimeout{}
+		}
+	}
+
+	return nil
+}
+
+// addPeer starts up the Peer and adds it to the Switch.
+func (sw *Switch) addPeer(p Peer) error {
+	if err := sw.filterPeer(p); err != nil {
+		return err
 	}
 
 	p.SetLogger(sw.Logger.With("peer", p.NodeInfo().NetAddress().String))
