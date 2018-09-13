@@ -640,6 +640,8 @@ func (cs *ConsensusState) handleMsg(mi msgInfo) {
 	case *BlockPartMessage:
 		// if the proposal is complete, we'll enterPrevote or tryFinalizeCommit
 		_, err = cs.addProposalBlockPart(msg, peerID)
+		// TODO: At this point if added is true we have added new and useful block part so we can mark it in peer statistics.
+
 		if err != nil && msg.Round != cs.Round {
 			cs.Logger.Debug("Received block part from wrong round", "height", cs.Height, "csRound", cs.Round, "blockRound", msg.Round)
 			err = nil
@@ -1495,6 +1497,8 @@ func (cs *ConsensusState) addProposalBlockPart(msg *BlockPartMessage, peerID p2p
 // Attempt to add the vote. if its a duplicate signature, dupeout the validator
 func (cs *ConsensusState) tryAddVote(vote *types.Vote, peerID p2p.ID) error {
 	_, err := cs.addVote(vote, peerID)
+	// TODO: at this point we should update statistics if addVote return value added = true. Maybe tryAddVote can return
+	// (added bool, err error) so we can implement statistics logic in the caller (handleMsg).
 	if err != nil {
 		// If the vote height is off, we'll just ignore it,
 		// But if it's a conflicting sig, add it to the cs.evpool.
