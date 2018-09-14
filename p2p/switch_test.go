@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"bytes"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -177,6 +178,119 @@ func TestSwitchFiltersOutItself(t *testing.T) {
 	rp.Stop()
 
 	assertNoPeersAfterTimeout(t, s1, 100*time.Millisecond)
+}
+
+func TestSwitchPeerFilter(t *testing.T) {
+	var (
+		filters = []PeerFilterFunc{
+			func(_ IPeerSet, _ Peer) error { return nil },
+			func(_ IPeerSet, _ Peer) error { return fmt.Errorf("denied!") },
+			func(_ IPeerSet, _ Peer) error { return nil },
+		}
+		sw = MakeSwitch(
+			cfg,
+			1,
+			"testing",
+			"123.123.123",
+			initSwitchFunc,
+			SwitchPeerFilters(filters...),
+		)
+	)
+	defer sw.Stop()
+
+	// simulate remote peer
+	rp := &remotePeer{PrivKey: ed25519.GenPrivKey(), Config: cfg}
+	rp.Start()
+	defer rp.Stop()
+
+	p, err := sw.transport.Dial(*rp.Addr(), peerConfig{
+		chDescs:      sw.chDescs,
+		onPeerError:  sw.StopPeerForError,
+		reactorsByCh: sw.reactorsByCh,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = sw.addPeer(p)
+	if err, ok := err.(ErrRejected); ok {
+		if !err.IsFiltered() {
+			t.Errorf("expected peer to be filtered")
+		}
+	} else {
+		t.Errorf("expected ErrRejected")
+	}
+}
+
+func TestSwitchPeerFilterTimeout(t *testing.T) {
+	var (
+		filters = []PeerFilterFunc{
+			func(_ IPeerSet, _ Peer) error {
+				time.Sleep(10 * time.Millisecond)
+				return nil
+			},
+		}
+		sw = MakeSwitch(
+			cfg,
+			1,
+			"testing",
+			"123.123.123",
+			initSwitchFunc,
+			SwitchFilterTimeout(5*time.Millisecond),
+			SwitchPeerFilters(filters...),
+		)
+	)
+	defer sw.Stop()
+
+	// simulate remote peer
+	rp := &remotePeer{PrivKey: ed25519.GenPrivKey(), Config: cfg}
+	rp.Start()
+	defer rp.Stop()
+
+	p, err := sw.transport.Dial(*rp.Addr(), peerConfig{
+		chDescs:      sw.chDescs,
+		onPeerError:  sw.StopPeerForError,
+		reactorsByCh: sw.reactorsByCh,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = sw.addPeer(p)
+	if _, ok := err.(ErrFilterTimeout); !ok {
+		t.Errorf("expected ErrFilterTimeout")
+	}
+}
+
+func TestSwitchPeerFilterDuplicate(t *testing.T) {
+	sw := MakeSwitch(cfg, 1, "testing", "123.123.123", initSwitchFunc)
+
+	// simulate remote peer
+	rp := &remotePeer{PrivKey: ed25519.GenPrivKey(), Config: cfg}
+	rp.Start()
+	defer rp.Stop()
+
+	p, err := sw.transport.Dial(*rp.Addr(), peerConfig{
+		chDescs:      sw.chDescs,
+		onPeerError:  sw.StopPeerForError,
+		reactorsByCh: sw.reactorsByCh,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sw.addPeer(p); err != nil {
+		t.Fatal(err)
+	}
+
+	err = sw.addPeer(p)
+	if err, ok := err.(ErrRejected); ok {
+		if !err.IsDuplicate() {
+			t.Errorf("expected peer to be duplicate")
+		}
+	} else {
+		t.Errorf("expected ErrRejected")
+	}
 }
 
 func assertNoPeersAfterTimeout(t *testing.T, sw *Switch, timeout time.Duration) {

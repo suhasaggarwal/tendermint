@@ -156,6 +156,7 @@ func MakeSwitch(
 	i int,
 	network, version string,
 	initSwitch func(int, *Switch) *Switch,
+	opts ...SwitchOption,
 ) *Switch {
 	var (
 		nodeKey = NodeKey{
@@ -184,7 +185,7 @@ func MakeSwitch(
 	}
 
 	// TODO: let the config be passed in?
-	sw := initSwitch(i, NewSwitch(cfg, t))
+	sw := initSwitch(i, NewSwitch(cfg, t, opts...))
 
 	for ch := range sw.reactorsByCh {
 		ni.Channels = append(ni.Channels, ch)
