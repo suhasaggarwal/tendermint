@@ -172,7 +172,6 @@ func TestSwitchFiltersOutItself(t *testing.T) {
 	}
 
 	assert.True(t, s1.addrBook.OurAddress(rp.Addr()))
-
 	assert.False(t, s1.addrBook.HasAddress(rp.Addr()))
 
 	rp.Stop()
@@ -202,29 +201,23 @@ func TestSwitchStopsNonPersistentPeerOnError(t *testing.T) {
 	rp.Start()
 	defer rp.Stop()
 
-	pc, err := testOutboundPeerConn(rp.Addr(), cfg, false, sw.nodeKey.PrivKey)
+	p, err := sw.transport.Dial(*rp.Addr(), peerConfig{
+		chDescs:      sw.chDescs,
+		onPeerError:  sw.StopPeerForError,
+		reactorsByCh: sw.reactorsByCh,
+	})
 	require.Nil(err)
-
-	p := newPeer(
-		pc,
-		sw.mConfig,
-		sw.nodeInfo,
-		sw.reactorsByCh,
-		sw.chDescs,
-		sw.StopPeerForError,
-	)
 
 	err = sw.addPeer(p)
 	require.Nil(err)
 
-	peer := sw.Peers().Get(rp.ID())
-	require.NotNil(peer)
+	require.NotNil(sw.Peers().Get(rp.ID()))
 
 	// simulate failure by closing connection
-	pc.CloseConn()
+	p.(*peer).CloseConn()
 
 	assertNoPeersAfterTimeout(t, sw, 100*time.Millisecond)
-	assert.False(peer.IsRunning())
+	assert.False(p.IsRunning())
 }
 
 func TestSwitchReconnectsToPersistentPeer(t *testing.T) {
@@ -242,26 +235,20 @@ func TestSwitchReconnectsToPersistentPeer(t *testing.T) {
 	rp.Start()
 	defer rp.Stop()
 
-	pc, err := testOutboundPeerConn(rp.Addr(), cfg, true, sw.nodeKey.PrivKey)
-	//	sw.reactorsByCh, sw.chDescs, sw.StopPeerForError, sw.nodeKey.PrivKey,
+	p, err := sw.transport.Dial(*rp.Addr(), peerConfig{
+		chDescs:      sw.chDescs,
+		onPeerError:  sw.StopPeerForError,
+		persistent:   true,
+		reactorsByCh: sw.reactorsByCh,
+	})
 	require.Nil(err)
-
-	p := newPeer(
-		pc,
-		sw.mConfig,
-		sw.nodeInfo,
-		sw.reactorsByCh,
-		sw.chDescs,
-		sw.StopPeerForError,
-	)
 
 	require.Nil(sw.addPeer(p))
 
-	peer := sw.Peers().Get(rp.ID())
-	require.NotNil(peer)
+	require.NotNil(sw.Peers().Get(rp.ID()))
 
 	// simulate failure by closing connection
-	pc.CloseConn()
+	p.(*peer).CloseConn()
 
 	// TODO: remove sleep, detect the disconnection, wait for reconnect
 	npeers := sw.Peers().Size()
@@ -273,7 +260,7 @@ func TestSwitchReconnectsToPersistentPeer(t *testing.T) {
 		}
 	}
 	assert.NotZero(npeers)
-	assert.False(peer.IsRunning())
+	assert.False(p.IsRunning())
 
 	// simulate another remote peer
 	rp = &remotePeer{

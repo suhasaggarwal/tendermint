@@ -187,19 +187,18 @@ func (rp *remotePeer) accept(l net.Listener) {
 		}
 
 		pc, err := testInboundPeerConn(conn, rp.Config, rp.PrivKey)
-
 		if err != nil {
 			golog.Fatalf("Failed to create a peer: %+v", err)
 		}
 
-		_, err = pc.HandshakeTimeout(NodeInfo{
+		_, err = handshake(pc.conn, time.Second, NodeInfo{
 			ID:         rp.Addr().ID,
 			Moniker:    "remote_peer",
 			Network:    "testing",
 			Version:    "123.123.123",
 			ListenAddr: l.Addr().String(),
 			Channels:   rp.channels,
-		}, 1*time.Second)
+		})
 		if err != nil {
 			golog.Fatalf("Failed to perform handshake: %+v", err)
 		}

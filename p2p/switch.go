@@ -43,7 +43,7 @@ type AddrBook interface {
 
 // PeerFilterFunc to be implemented by filter hooks after a new Peer has been
 // fully setup.
-type PeerFilterFunc func(map[ID]Peer, Peer) error
+type PeerFilterFunc func(IPeerSet, Peer) error
 
 //-----------------------------------------------------------------------------
 
@@ -533,10 +533,16 @@ func (sw *Switch) acceptRoutine() {
 // StopPeerForError is called
 func (sw *Switch) addOutboundPeerWithConfig(
 	addr *NetAddress,
-	config *config.P2PConfig,
+	cfg *config.P2PConfig,
 	persistent bool,
 ) error {
 	sw.Logger.Info("Dialing peer", "address", addr)
+
+	// XXX(xla): Remove the leakage of test concerns in implementation.
+	if cfg.TestDialFail {
+		go sw.reconnectToPeer(addr)
+		return fmt.Errorf("dial err (peerConfig.DialFail == true)")
+	}
 
 	p, err := sw.transport.Dial(*addr, peerConfig{
 		chDescs:      sw.chDescs,
@@ -580,6 +586,7 @@ func (sw *Switch) filterPeer(p Peer) error {
 
 	for _, f := range sw.peerFilters {
 		go func(f PeerFilterFunc, p Peer, errc chan<- error) {
+			errc <- f(sw.peers, p)
 		}(f, p, errc)
 	}
 
