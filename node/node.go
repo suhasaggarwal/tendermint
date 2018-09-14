@@ -369,7 +369,7 @@ func NewNode(config *cfg.Config,
 		peerFilters = append(
 			peerFilters,
 			// ABCI query for ID filtering.
-			func(_ map[p2p.ID]p2p.Peer, p p2p.Peer) error {
+			func(_ p2p.IPeerSet, p p2p.Peer) error {
 				res, err := proxyApp.Query().QuerySync(abci.RequestQuery{
 					Path: fmt.Sprintf("/p2p/filter/id/%s", p.ID()),
 				})
