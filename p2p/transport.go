@@ -273,7 +273,13 @@ func (mt *MultiplexTransport) cleanup(c net.Conn) error {
 	return c.Close()
 }
 
-func (mt *MultiplexTransport) filterConn(c net.Conn) error {
+func (mt *MultiplexTransport) filterConn(c net.Conn) (err error) {
+	defer func() {
+		if err != nil {
+			_ = c.Close()
+		}
+	}()
+
 	// Reject if connection is already present.
 	if mt.conns.Has(c) {
 		return ErrRejected{conn: c, isDuplicate: true}
