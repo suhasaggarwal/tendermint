@@ -120,31 +120,8 @@ func TestTransportMultiplexConnFilterTimeout(t *testing.T) {
 		t.Errorf("expected ErrFilterTimeout")
 	}
 }
-
 func TestTransportMultiplexAcceptMultiple(t *testing.T) {
-	var (
-		pv = ed25519.GenPrivKey()
-		mt = NewMultiplexTransport(
-			NodeInfo{
-				ID:         PubKeyToID(pv.PubKey()),
-				ListenAddr: "127.0.0.1:0",
-				Moniker:    "transport",
-				Version:    "1.0.0",
-			},
-			NodeKey{
-				PrivKey: pv,
-			},
-		)
-	)
-
-	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := mt.Listen(*addr); err != nil {
-		t.Fatal(err)
-	}
+	mt := testSetupMultiplexTransport(t)
 
 	var (
 		seed = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -226,29 +203,7 @@ func TestTransportMultiplexAcceptMultiple(t *testing.T) {
 }
 
 func TestTransportMultiplexAcceptNonBlocking(t *testing.T) {
-	var (
-		pv = ed25519.GenPrivKey()
-		mt = NewMultiplexTransport(
-			NodeInfo{
-				ID:         PubKeyToID(pv.PubKey()),
-				ListenAddr: "127.0.0.1:0",
-				Moniker:    "transport",
-				Version:    "1.0.0",
-			},
-			NodeKey{
-				PrivKey: pv,
-			},
-		)
-	)
-
-	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := mt.Listen(*addr); err != nil {
-		t.Fatal(err)
-	}
+	mt := testSetupMultiplexTransport(t)
 
 	var (
 		fastNodePV   = ed25519.GenPrivKey()
@@ -348,29 +303,7 @@ func TestTransportMultiplexAcceptNonBlocking(t *testing.T) {
 }
 
 func TestTransportMultiplexValidateNodeInfo(t *testing.T) {
-	var (
-		pv = ed25519.GenPrivKey()
-		mt = NewMultiplexTransport(
-			NodeInfo{
-				ID:         PubKeyToID(pv.PubKey()),
-				ListenAddr: "127.0.0.1:0",
-				Moniker:    "transport",
-				Version:    "1.0.0",
-			},
-			NodeKey{
-				PrivKey: pv,
-			},
-		)
-	)
-
-	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := mt.Listen(*addr); err != nil {
-		t.Fatal(err)
-	}
+	mt := testSetupMultiplexTransport(t)
 
 	errc := make(chan error)
 
@@ -409,7 +342,7 @@ func TestTransportMultiplexValidateNodeInfo(t *testing.T) {
 		t.Errorf("connection failed: %v", err)
 	}
 
-	_, err = mt.Accept(peerConfig{})
+	_, err := mt.Accept(peerConfig{})
 	if err, ok := err.(ErrRejected); ok {
 		if !err.IsNodeInfoInvalid() {
 			t.Errorf("expected NodeInfo to be invalid")
@@ -420,29 +353,7 @@ func TestTransportMultiplexValidateNodeInfo(t *testing.T) {
 }
 
 func TestTransportMultiplexRejectMissmatchID(t *testing.T) {
-	var (
-		pv = ed25519.GenPrivKey()
-		mt = NewMultiplexTransport(
-			NodeInfo{
-				ID:         PubKeyToID(pv.PubKey()),
-				ListenAddr: "127.0.0.1:0",
-				Moniker:    "transport",
-				Version:    "1.0.0",
-			},
-			NodeKey{
-				PrivKey: pv,
-			},
-		)
-	)
-
-	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := mt.Listen(*addr); err != nil {
-		t.Fatal(err)
-	}
+	mt := testSetupMultiplexTransport(t)
 
 	errc := make(chan error)
 
@@ -478,7 +389,7 @@ func TestTransportMultiplexRejectMissmatchID(t *testing.T) {
 		t.Errorf("connection failed: %v", err)
 	}
 
-	_, err = mt.Accept(peerConfig{})
+	_, err := mt.Accept(peerConfig{})
 	if err, ok := err.(ErrRejected); ok {
 		if !err.IsAuthFailure() {
 			t.Errorf("expected auth failure")
@@ -489,29 +400,7 @@ func TestTransportMultiplexRejectMissmatchID(t *testing.T) {
 }
 
 func TestTransportMultiplexRejectIncompatible(t *testing.T) {
-	var (
-		pv = ed25519.GenPrivKey()
-		mt = NewMultiplexTransport(
-			NodeInfo{
-				ID:         PubKeyToID(pv.PubKey()),
-				ListenAddr: "127.0.0.1:0",
-				Moniker:    "transport",
-				Version:    "1.0.0",
-			},
-			NodeKey{
-				PrivKey: pv,
-			},
-		)
-	)
-
-	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := mt.Listen(*addr); err != nil {
-		t.Fatal(err)
-	}
+	mt := testSetupMultiplexTransport(t)
 
 	errc := make(chan error)
 
@@ -546,7 +435,7 @@ func TestTransportMultiplexRejectIncompatible(t *testing.T) {
 		close(errc)
 	}()
 
-	_, err = mt.Accept(peerConfig{})
+	_, err := mt.Accept(peerConfig{})
 	if err, ok := err.(ErrRejected); ok {
 		if !err.IsIncompatible() {
 			t.Errorf("expected to reject incompatible")
@@ -557,29 +446,7 @@ func TestTransportMultiplexRejectIncompatible(t *testing.T) {
 }
 
 func TestTransportMultiplexRejectSelf(t *testing.T) {
-	var (
-		pv = ed25519.GenPrivKey()
-		mt = NewMultiplexTransport(
-			NodeInfo{
-				ID:         PubKeyToID(pv.PubKey()),
-				ListenAddr: "127.0.0.1:0",
-				Moniker:    "transport",
-				Version:    "1.0.0",
-			},
-			NodeKey{
-				PrivKey: pv,
-			},
-		)
-	)
-
-	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := mt.Listen(*addr); err != nil {
-		t.Fatal(err)
-	}
+	mt := testSetupMultiplexTransport(t)
 
 	errc := make(chan error)
 
@@ -611,7 +478,7 @@ func TestTransportMultiplexRejectSelf(t *testing.T) {
 		t.Errorf("expected connection failure")
 	}
 
-	_, err = mt.Accept(peerConfig{})
+	_, err := mt.Accept(peerConfig{})
 	if err, ok := err.(ErrRejected); ok {
 		if !err.IsSelf() {
 			t.Errorf("expected to reject self")
@@ -699,6 +566,34 @@ func TestTransportHandshake(t *testing.T) {
 	if have, want := ni, peerNodeInfo; !reflect.DeepEqual(have, want) {
 		t.Errorf("have %v, want %v", have, want)
 	}
+}
+
+func testSetupMultiplexTransport(t *testing.T) *MultiplexTransport {
+	var (
+		pv = ed25519.GenPrivKey()
+		mt = NewMultiplexTransport(
+			NodeInfo{
+				ID:         PubKeyToID(pv.PubKey()),
+				ListenAddr: "127.0.0.1:0",
+				Moniker:    "transport",
+				Version:    "1.0.0",
+			},
+			NodeKey{
+				PrivKey: pv,
+			},
+		)
+	)
+
+	addr, err := NewNetAddressStringWithOptionalID("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mt.Listen(*addr); err != nil {
+		t.Fatal(err)
+	}
+
+	return mt
 }
 
 type testTransportAddr struct{}
