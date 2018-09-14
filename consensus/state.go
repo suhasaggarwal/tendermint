@@ -63,6 +63,30 @@ func (ti *timeoutInfo) String() string {
 	return fmt.Sprintf("%v ; %d/%d %v", ti.Duration, ti.Height, ti.Round, ti.Step)
 }
 
+type MsgType int
+
+const (
+	Vote MsgType = iota
+	BlockPart
+)
+
+// msgs sent to reactor to compute statistics on peer activity
+type peerInfo struct {
+	MsgType MsgType `json:"msg_type"`
+	PeerID  p2p.ID  `json:"peer_key"`
+}
+
+func (mt MsgType) String() string {
+	switch mt {
+	case Vote:
+		return "Vote"
+	case BlockPart:
+		return "BlockPart"
+	default:
+		return "MsgTypeUnknown" // Cannot panic.
+	}
+}
+
 // ConsensusState handles execution of the consensus algorithm.
 // It processes votes and proposals, and upon reaching agreement,
 // commits blocks to the chain and executes them against the application.
@@ -90,6 +114,10 @@ type ConsensusState struct {
 	peerMsgQueue     chan msgInfo
 	internalMsgQueue chan msgInfo
 	timeoutTicker    TimeoutTicker
+
+	// information about about added votes and block parts are written on this channel
+	// so statistics can be computed by switch
+	statsMsgQueue chan peerInfo
 
 	// we use eventBus to trigger msg broadcasts in the reactor,
 	// and to notify external subscribers, eg. through a websocket
@@ -141,6 +169,7 @@ func NewConsensusState(
 		peerMsgQueue:     make(chan msgInfo, msgQueueSize),
 		internalMsgQueue: make(chan msgInfo, msgQueueSize),
 		timeoutTicker:    NewTimeoutTicker(),
+		statsMsgQueue:    make(chan peerInfo, msgQueueSize),
 		done:             make(chan struct{}),
 		doWALCatchup:     true,
 		wal:              nilWAL{},
@@ -639,8 +668,10 @@ func (cs *ConsensusState) handleMsg(mi msgInfo) {
 		err = cs.setProposal(msg.Proposal)
 	case *BlockPartMessage:
 		// if the proposal is complete, we'll enterPrevote or tryFinalizeCommit
-		_, err = cs.addProposalBlockPart(msg, peerID)
-		// TODO: At this point if added is true we have added new and useful block part so we can mark it in peer statistics.
+		added, err := cs.addProposalBlockPart(msg, peerID)
+		if added {
+			cs.statsMsgQueue <- peerInfo{BlockPart, peerID}
+		}
 
 		if err != nil && msg.Round != cs.Round {
 			cs.Logger.Debug("Received block part from wrong round", "height", cs.Height, "csRound", cs.Round, "blockRound", msg.Round)
@@ -649,7 +680,11 @@ func (cs *ConsensusState) handleMsg(mi msgInfo) {
 	case *VoteMessage:
 		// attempt to add the vote and dupeout the validator if its a duplicate signature
 		// if the vote gives us a 2/3-any or 2/3-one, we transition
-		err := cs.tryAddVote(msg.Vote, peerID)
+		added, err := cs.tryAddVote(msg.Vote, peerID)
+		if added {
+			cs.statsMsgQueue <- peerInfo{Vote, peerID}
+		}
+
 		if err == ErrAddingVote {
 			// TODO: punish peer
 			// We probably don't want to stop the peer here. The vote does not
@@ -1495,31 +1530,29 @@ func (cs *ConsensusState) addProposalBlockPart(msg *BlockPartMessage, peerID p2p
 }
 
 // Attempt to add the vote. if its a duplicate signature, dupeout the validator
-func (cs *ConsensusState) tryAddVote(vote *types.Vote, peerID p2p.ID) error {
-	_, err := cs.addVote(vote, peerID)
-	// TODO: at this point we should update statistics if addVote return value added = true. Maybe tryAddVote can return
-	// (added bool, err error) so we can implement statistics logic in the caller (handleMsg).
+func (cs *ConsensusState) tryAddVote(vote *types.Vote, peerID p2p.ID) (added bool, err error) {
+	added, err = cs.addVote(vote, peerID)
 	if err != nil {
 		// If the vote height is off, we'll just ignore it,
 		// But if it's a conflicting sig, add it to the cs.evpool.
 		// If it's otherwise invalid, punish peer.
 		if err == ErrVoteHeightMismatch {
-			return err
+			return added, err
 		} else if voteErr, ok := err.(*types.ErrVoteConflictingVotes); ok {
 			if bytes.Equal(vote.ValidatorAddress, cs.privValidator.GetAddress()) {
 				cs.Logger.Error("Found conflicting vote from ourselves. Did you unsafe_reset a validator?", "height", vote.Height, "round", vote.Round, "type", vote.Type)
-				return err
+				return added, err
 			}
 			cs.evpool.AddEvidence(voteErr.DuplicateVoteEvidence)
-			return err
+			return added, err
 		} else {
 			// Probably an invalid signature / Bad peer.
 			// Seems this can also err sometimes with "Unexpected step" - perhaps not from a bad peer ?
 			cs.Logger.Error("Error attempting to add vote", "err", err)
-			return ErrAddingVote
+			return added, ErrAddingVote
 		}
 	}
-	return nil
+	return added, nil
 }
 
 //-----------------------------------------------------------------------------

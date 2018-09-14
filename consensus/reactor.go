@@ -60,6 +60,9 @@ func NewConsensusReactor(consensusState *ConsensusState, fastSync bool) *Consens
 func (conR *ConsensusReactor) OnStart() error {
 	conR.Logger.Info("ConsensusReactor ", "fastSync", conR.FastSync())
 
+	// start routine that computes peer statistics
+	go conR.peerStatsRoutine()
+
 	conR.subscribeToBroadcastEvents()
 
 	if !conR.FastSync() {
@@ -258,10 +261,7 @@ func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) 
 			ps.ApplyProposalPOLMessage(msg)
 		case *BlockPartMessage:
 			ps.SetHasProposalBlockPart(msg.Height, msg.Round, msg.Part.Index)
-			// TODO: Move this to the part where block part is completely evaluated
-			if numBlocks := ps.RecordBlockPart(msg); numBlocks%blocksToContributeToBecomeGoodPeer == 0 {
-				conR.Switch.MarkPeerAsGood(src)
-			}
+
 			conR.conS.peerMsgQueue <- msgInfo{msg, src.ID()}
 		default:
 			conR.Logger.Error(fmt.Sprintf("Unknown message type %v", reflect.TypeOf(msg)))
@@ -281,10 +281,6 @@ func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) 
 			ps.EnsureVoteBitArrays(height, valSize)
 			ps.EnsureVoteBitArrays(height-1, lastCommitSize)
 			ps.SetHasVote(msg.Vote)
-			// TODO: Move this to the part where vote is completely evaluated
-			if blocks := ps.RecordVote(msg.Vote); blocks%blocksToContributeToBecomeGoodPeer == 0 {
-				conR.Switch.MarkPeerAsGood(src)
-			}
 
 			cs.peerMsgQueue <- msgInfo{msg, src.ID()}
 
@@ -796,6 +792,39 @@ OUTER_LOOP:
 	}
 }
 
+func (conR *ConsensusReactor) peerStatsRoutine() {
+	for {
+		// Manage disconnects from self or peer.
+		if !conR.IsRunning() {
+			conR.Logger.Info("Stopping peerStatsRoutine")
+			return
+		}
+
+		select {
+		case msg := <-conR.conS.statsMsgQueue:
+			// Get peer
+			peer := conR.Switch.Peers().Get(msg.PeerID)
+			if peer != nil {
+				// Get peer states
+				ps := peer.Get(types.PeerStateKey).(*PeerState)
+				switch msg.MsgType {
+				case Vote:
+					if numVotes := ps.RecordVote(); numVotes == blocksToContributeToBecomeGoodPeer {
+						conR.Switch.MarkPeerAsGood(peer)
+						ps.ResetVoteStats()
+					}
+				case BlockPart:
+					if numParts := ps.RecordBlockPart(); numParts == blocksToContributeToBecomeGoodPeer {
+						conR.Switch.MarkPeerAsGood(peer)
+						ps.ResetBlockPartStats()
+					}
+				}
+			}
+
+		}
+	}
+}
+
 // String returns a string representation of the ConsensusReactor.
 // NOTE: For now, it is just a hard-coded string to avoid accessing unprotected shared variables.
 // TODO: improve!
@@ -1085,16 +1114,21 @@ func (ps *PeerState) ensureVoteBitArrays(height int64, numValidators int) {
 // RecordVote updates internal statistics for this peer by recording the vote.
 // It returns the total number of votes (1 per block). This essentially means
 // the number of blocks for which peer has been sending us votes.
-func (ps *PeerState) RecordVote(vote *types.Vote) int {
+func (ps *PeerState) RecordVote() int {
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 
-	if ps.Stats.LastVoteHeight >= vote.Height {
-		return ps.Stats.Votes
-	}
-	ps.Stats.LastVoteHeight = vote.Height
 	ps.Stats.Votes++
+
 	return ps.Stats.Votes
+}
+
+func (ps *PeerState) ResetVoteStats() {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	ps.Stats.Votes = 0
+	return
 }
 
 // VotesSent returns the number of blocks for which peer has been sending us
@@ -1110,17 +1144,20 @@ func (ps *PeerState) VotesSent() int {
 // block part. It returns the total number of block parts (1 per block). This
 // essentially means the number of blocks for which peer has been sending us
 // block parts.
-func (ps *PeerState) RecordBlockPart(bp *BlockPartMessage) int {
+func (ps *PeerState) RecordBlockPart() int {
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 
-	if ps.Stats.LastBlockPartHeight >= bp.Height {
-		return ps.Stats.BlockParts
-	}
-
-	ps.Stats.LastBlockPartHeight = bp.Height
 	ps.Stats.BlockParts++
 	return ps.Stats.BlockParts
+}
+
+func (ps *PeerState) ResetBlockPartStats() {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	ps.Stats.BlockParts = 0
+	return
 }
 
 // BlockPartsSent returns the number of blocks for which peer has been sending
