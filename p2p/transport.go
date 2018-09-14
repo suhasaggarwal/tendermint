@@ -231,8 +231,13 @@ func (mt *MultiplexTransport) acceptPeers() {
 		c, err := mt.listener.Accept()
 		if err != nil {
 			// If Close() has been called, silently exit.
-			if _, ok := <-mt.closec; !ok {
-				return
+			select {
+			case _, ok := <-mt.closec:
+				if !ok {
+					return
+				}
+			default:
+				// Transport is not closed
 			}
 
 			mt.acceptc <- accept{err: err}
