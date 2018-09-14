@@ -504,7 +504,7 @@ func (sw *Switch) acceptRoutine() {
 		_, in, _ := sw.NumPeers()
 		if in >= sw.config.MaxNumInboundPeers {
 			sw.Logger.Info(
-				"Ignoring inbound connection: already have enough peers",
+				"Ignoring inbound connection: already have enough inbound peers",
 				"address", p.NodeInfo().NetAddress().String(),
 				"have", in,
 				"max", sw.config.MaxNumInboundPeers,
