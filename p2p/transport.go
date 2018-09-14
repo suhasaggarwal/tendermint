@@ -403,10 +403,8 @@ func (mt *MultiplexTransport) wrapPeer(
 
 	// Wait for Peer to Stop so we can cleanup.
 	go func(c net.Conn) {
-		select {
-		case <-p.Quit():
-			_ = mt.cleanup(c)
-		}
+		<-p.Quit()
+		_ = mt.cleanup(c)
 	}(c)
 
 	return p
