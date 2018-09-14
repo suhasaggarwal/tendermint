@@ -7,7 +7,6 @@ import (
 
 // ConnSet is a lookup table for connections and all their ips.
 type ConnSet interface {
-	Get(string) net.Conn
 	Has(net.Conn) bool
 	HasIP(net.IP) bool
 	Set(net.Conn, []net.IP)
@@ -30,28 +29,6 @@ func NewConnSet() *connSet {
 	return &connSet{
 		conns: map[string]connSetItem{},
 	}
-}
-
-func (cs *connSet) Set(c net.Conn, ips []net.IP) {
-	cs.Lock()
-	defer cs.Unlock()
-
-	cs.conns[c.RemoteAddr().String()] = connSetItem{
-		conn: c,
-		ips:  ips,
-	}
-}
-
-func (cs *connSet) Get(addr string) net.Conn {
-	cs.RLock()
-	defer cs.RUnlock()
-
-	item, ok := cs.conns[addr]
-	if ok {
-		return item.conn
-	}
-
-	return nil
 }
 
 func (cs *connSet) Has(c net.Conn) bool {
@@ -83,4 +60,14 @@ func (cs *connSet) Remove(c net.Conn) {
 	defer cs.Unlock()
 
 	delete(cs.conns, c.RemoteAddr().String())
+}
+
+func (cs *connSet) Set(c net.Conn, ips []net.IP) {
+	cs.Lock()
+	defer cs.Unlock()
+
+	cs.conns[c.RemoteAddr().String()] = connSetItem{
+		conn: c,
+		ips:  ips,
+	}
 }
