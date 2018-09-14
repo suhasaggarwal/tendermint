@@ -17,7 +17,7 @@
   vote](https://godoc.org/github.com/tendermint/tendermint/types#FirstPrecommit)
   for something.
 - A vote _at_ `(H,R)` is a vote signed with the bytes for `H` and `R`
-  included in its [sign-bytes](block-structure.html#vote-sign-bytes).
+  included in its [sign-bytes](../blockchain/blockchain.md).
 - _+2/3_ is short for "more than 2/3"
 - _1/3+_ is short for "1/3 or more"
 - A set of +2/3 of prevotes for a particular block or `<nil>` at
@@ -282,7 +282,7 @@ may make JSet verification/gossip logic easier to implement.
 ### Censorship Attacks
 
 Due to the definition of a block
-[commit](../../tendermint-core/validator.md#commiting-a-block), any 1/3+ coalition of
+[commit](../../tendermint-core/validators.md#commit-a-block), any 1/3+ coalition of
 validators can halt the blockchain by not broadcasting their votes. Such
 a coalition can also censor particular transactions by rejecting blocks
 that include these transactions, though this would result in a

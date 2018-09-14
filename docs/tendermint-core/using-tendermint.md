@@ -42,12 +42,14 @@ definition](https://github.com/tendermint/tendermint/blob/master/types/genesis.g
 - `genesis_time`: Official time of blockchain start.
 - `chain_id`: ID of the blockchain. This must be unique for
   every blockchain. If your testnet blockchains do not have unique
-  chain IDs, you will have a bad time.
-- `validators`:
-- `pub_key`: The first element specifies the `pub_key` type. 1
+  chain IDs, you will have a bad time. The ChainID must be less than 50 symbols.
+- `validators`: List of initial validators. Note this may be overridden entirely by the
+  application, and may be left empty to make explicit that the
+  application will initialize the validator set with ResponseInitChain.
+  - `pub_key`: The first element specifies the `pub_key` type. 1
   == Ed25519. The second element are the pubkey bytes.
-- `power`: The validator's voting power.
-- `name`: Name of the validator (optional).
+  - `power`: The validator's voting power.
+  - `name`: Name of the validator (optional).
 - `app_hash`: The expected application hash (as returned by the
   `ResponseInfo` ABCI message) upon genesis. If the app's hash does
   not match, Tendermint will panic.
@@ -93,8 +95,7 @@ definition](https://github.com/tendermint/tendermint/blob/master/types/genesis.g
       "power": "1",
       "name": "node3"
     }
-  ],
-  "app_hash": ""
+  ]
 }
 ```
 
@@ -155,6 +156,10 @@ Visit http://localhost:26657 in your browser to see the list of other
 endpoints. Some take no arguments (like `/status`), while others specify
 the argument name and use `_` as a placeholder.
 
+::: tip
+Find the RPC Documentation [here](https://tendermint.com/rpc/)
+:::
+
 ### Formatting
 
 The following nuances when sending/formatting transactions should be
@@ -208,23 +213,19 @@ Note that raw hex cannot be used in `POST` transactions.
 **WARNING: UNSAFE** Only do this in development and only if you can
 afford to lose all blockchain data!
 
-To reset a blockchain, stop the node, remove the `~/.tendermint/data`
-directory and run
+To reset a blockchain, stop the node and run:
 
 ```
-tendermint unsafe_reset_priv_validator
+tendermint unsafe_reset_all
 ```
 
-This final step is necessary to reset the `priv_validator.json`, which
-otherwise prevents you from making conflicting votes in the consensus
-(something that could get you in trouble if you do it on a real
-blockchain). If you don't reset the `priv_validator.json`, your fresh
-new blockchain will not make any blocks.
+This command will remove the data directory and reset private validator and
+address book files.
 
 ## Configuration
 
 Tendermint uses a `config.toml` for configuration. For details, see [the
-config specification](./tendermint-core/configuration.md).
+config specification](./configuration.md).
 
 Notable options include the socket address of the application
 (`proxy_app`), the listening address of the Tendermint peer
