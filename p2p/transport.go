@@ -8,8 +8,6 @@ import (
 
 	"github.com/tendermint/tendermint/config"
 	crypto "github.com/tendermint/tendermint/crypto"
-	cmn "github.com/tendermint/tendermint/libs/common"
-	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p/conn"
 )
 
@@ -269,7 +267,7 @@ func (mt *MultiplexTransport) acceptPeers() {
 	}
 }
 
-func (mt *MultiplexTransport) cleanup(c net.Conn, id ID) error {
+func (mt *MultiplexTransport) cleanup(c net.Conn) error {
 	mt.conns.Remove(c)
 
 	return c.Close()
@@ -317,7 +315,7 @@ func (mt *MultiplexTransport) upgrade(
 ) (sc *conn.SecretConnection, ni NodeInfo, err error) {
 	defer func() {
 		if err != nil {
-			_ = mt.cleanup(c, ni.ID)
+			_ = mt.cleanup(c)
 		}
 	}()
 
@@ -383,26 +381,29 @@ func (mt *MultiplexTransport) wrapPeer(
 	ni NodeInfo,
 	cfg peerConfig,
 ) Peer {
-	pc := peerConn{
-		conn:       c,
-		config:     &mt.p2pConfig,
-		outbound:   cfg.outbound,
-		persistent: cfg.persistent,
-	}
-
-	return newMultiplexPeer(
-		newPeer(
-			pc,
-			mt.mConfig,
-			ni,
-			cfg.reactorsByCh,
-			cfg.chDescs,
-			cfg.onPeerError,
-		),
-		func() {
-			_ = mt.cleanup(c, ni.ID)
+	p := newPeer(
+		peerConn{
+			conn:       c,
+			config:     &mt.p2pConfig,
+			outbound:   cfg.outbound,
+			persistent: cfg.persistent,
 		},
+		mt.mConfig,
+		ni,
+		cfg.reactorsByCh,
+		cfg.chDescs,
+		cfg.onPeerError,
 	)
+
+	// Wait for Peer to Stop so we can cleanup.
+	go func(c net.Conn) {
+		select {
+		case <-p.Quit():
+			_ = mt.cleanup(c)
+		}
+	}(c)
+
+	return p
 }
 
 func handshake(
@@ -478,43 +479,4 @@ func resolveIPs(resolver IPResolver, c net.Conn) ([]net.IP, error) {
 	}
 
 	return ips, nil
-}
-
-// multiplexPeer is the Peer implementation returned by the multiplexTransport
-// and wraps the default peer implementation for now, with an added hook for
-// shutdown of the peer. It should ultimately grow into the proper
-// implementation.
-type multiplexPeer struct {
-	cmn.BaseService
-	*peer
-
-	onStop func()
-}
-
-func newMultiplexPeer(p *peer, onStop func()) *multiplexPeer {
-	mp := &multiplexPeer{
-		onStop: onStop,
-		peer:   p,
-	}
-
-	mp.BaseService = *cmn.NewBaseService(nil, "MultiplexPeer", mp)
-
-	return mp
-}
-
-func (mp *multiplexPeer) OnStart() error {
-	return mp.peer.OnStart()
-}
-
-func (mp *multiplexPeer) OnStop() {
-	mp.onStop()
-	mp.peer.OnStop()
-}
-
-func (mp *multiplexPeer) SetLogger(logger log.Logger) {
-	mp.peer.SetLogger(logger)
-}
-
-func (mp *multiplexPeer) String() string {
-	return mp.peer.String()
 }
