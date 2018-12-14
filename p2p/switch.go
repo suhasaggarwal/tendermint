@@ -489,6 +489,7 @@ func (sw *Switch) acceptRoutine() {
 
 				sw.Logger.Info(
 					"Inbound Peer rejected",
+					"addr", rErr.Addr(),
 					"err", err,
 					"numPeers", sw.peers.Size(),
 				)
