@@ -338,6 +338,7 @@ func (mt *MultiplexTransport) upgrade(
 			conn:          c,
 			err:           fmt.Errorf("secrect conn failed: %v", err),
 			isAuthFailure: true,
+			addr:          *NewNetAddress("UNKNOWN", c.RemoteAddr()),
 		}
 	}
 
