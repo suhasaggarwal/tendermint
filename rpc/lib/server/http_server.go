@@ -37,7 +37,7 @@ const (
 	// be less than the WriteTimeout here.
 	// TODO: use a config instead.
 	ReadTimeout  = 3 * time.Second
-	WriteTimeout = (60 * 2) + 1*time.Second
+	WriteTimeout = 120 * time.Second
 	//WriteTimeout = 20 * time.Second
 )
 
