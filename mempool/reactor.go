@@ -59,7 +59,7 @@ func (memR *MempoolReactor) GetChannels() []*p2p.ChannelDescriptor {
 	return []*p2p.ChannelDescriptor{
 		{
 			ID:       MempoolChannel,
-			Priority: 5,
+			Priority: 1, //Matt based on suggestion in here https://github.com/tendermint/tendermint/issues/3039
 		},
 	}
 }
