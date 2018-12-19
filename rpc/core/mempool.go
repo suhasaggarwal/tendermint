@@ -9,7 +9,6 @@ import (
 
 	abci "github.com/tendermint/tendermint/abci/types"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	rpcserver "github.com/tendermint/tendermint/rpc/lib/server"
 	"github.com/tendermint/tendermint/types"
 )
 
@@ -211,7 +210,12 @@ func BroadcastTxCommit(tx types.Tx) (*ctypes.ResultBroadcastTxCommit, error) {
 
 	// Wait for the tx to be included in a block or timeout.
 	// TODO: configurable?
+<<<<<<< HEAD
 	var deliverTxTimeout = rpcserver.WriteTimeout / 2
+=======
+	//	var deliverTxTimeout = rpcserver.WriteTimeout / 2
+	var deliverTxTimeout = 60 * 2 * time.Second
+>>>>>>> 9a8cb94f... tweak write timeout on http
 	select {
 	case deliverTxResMsg, ok := <-deliverTxResCh: // The tx was included in a block.
 		if !ok {
