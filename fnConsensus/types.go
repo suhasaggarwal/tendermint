@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/tendermint/tendermint/crypto"
 	cmn "github.com/tendermint/tendermint/libs/common"
@@ -17,12 +16,7 @@ var ErrFnVoteInvalidSignature = errors.New("invalid validator signature")
 var ErrFnVoteNotPresent = errors.New("Fn vote is not present for validator")
 var ErrFnVoteAlreadyCasted = errors.New("Fn vote is already casted")
 
-type RequestPeerInfo struct {
-}
-
-type PeerInfo struct {
-	LastUpdated time.Time
-	State       ReactorState
+type RequestPeerReactorState struct {
 }
 
 type ReactorState struct {
@@ -239,6 +233,6 @@ func RegisterFnConsensusTypes() {
 	cdc.RegisterConcrete(&FnExecutionResponse{}, "tendermint/fnConsensusReactor/FnExecutionResponse", nil)
 	cdc.RegisterConcrete(&FnVoteSet{}, "tendermint/fnConsensusReactor/FnVoteSet", nil)
 	cdc.RegisterConcrete(&FnVotePayload{}, "tendermint/fnConsensusReactor/FnVotePayload", nil)
-	cdc.RegisterConcrete(&PeerInfo{}, "tendermint/fnConsensusReactor/PeerInfo", nil)
+	cdc.RegisterConcrete(&RequestPeerReactorState{}, "tendermint/fnConsensusReactor/RequestPeerReactorState", nil)
 	cdc.RegisterConcrete(&ReactorState{}, "tendermint/fnConsensusReactor/ReactorState", nil)
 }

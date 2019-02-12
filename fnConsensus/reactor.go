@@ -13,14 +13,14 @@ const FnStateChannelID = byte(0x51)
 type FnConsensusReactor struct {
 	p2p.BaseReactor
 
-	connectedPeers map[p2p.ID]PeerInfo
+	connectedPeers map[p2p.ID]p2p.Peer
 	state          *ReactorState
 	db             dbm.DB
 }
 
 func NewFnConsensusReactor(db dbm.DB) *FnConsensusReactor {
 	reactor := &FnConsensusReactor{
-		connectedPeers: make(map[p2p.ID]PeerInfo),
+		connectedPeers: make(map[p2p.ID]p2p.Peer),
 		db:             db,
 	}
 
@@ -60,13 +60,16 @@ func (f *FnConsensusReactor) GetChannels() []*conn.ChannelDescriptor {
 
 // AddPeer is called by the switch when a new peer is added.
 func (f *FnConsensusReactor) AddPeer(peer p2p.Peer) {
-
+	f.connectedPeers[peer.ID()] = peer
+	// Start go routine for state sync
+	// Start go routine for vote sync
 }
 
 // RemovePeer is called by the switch when the peer is stopped (due to error
 // or other reason).
 func (f *FnConsensusReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
-
+	// Stop go routine for state sync
+	// Stop go routine for vote sync
 }
 
 // Receive is called when msgBytes is received from peer.
