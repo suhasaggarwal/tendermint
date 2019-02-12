@@ -14,17 +14,27 @@ type FnConsensusReactor struct {
 	p2p.BaseReactor
 
 	connectedPeers map[p2p.ID]PeerInfo
-	ownState       ReactorState
+	state          *ReactorState
 	db             dbm.DB
 }
 
-func NewFnConsensusReactor() *FnConsensusReactor {
+func NewFnConsensusReactor(db dbm.DB) *FnConsensusReactor {
 	reactor := &FnConsensusReactor{
 		connectedPeers: make(map[p2p.ID]PeerInfo),
+		db:             db,
 	}
 
 	reactor.BaseReactor = *p2p.NewBaseReactor("FnConsensusReactor", reactor)
 	return reactor
+}
+
+func (f *FnConsensusReactor) OnStart() error {
+	reactorState, err := LoadReactorState(f.db)
+	if err != nil {
+		return err
+	}
+	f.state = reactorState
+	return nil
 }
 
 // GetChannels returns the list of channel descriptors.

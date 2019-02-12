@@ -27,17 +27,21 @@ type PeerInfo struct {
 
 type ReactorState struct {
 	SeenRequestID  int64
-	CurrentVoteSet FnVoteSet
+	CurrentVoteSet *FnVoteSet
 }
 
 func (p *ReactorState) Marshal() ([]byte, error) {
 	return cdc.MarshalBinaryLengthPrefixed(p)
 }
 
-func NewEmptyReactorState(nonce int64, valSet *types.ValidatorSet) *ReactorState {
+func (p *ReactorState) Unmarshal(bz []byte) error {
+	return cdc.UnmarshalBinaryLengthPrefixed(bz, p)
+}
+
+func NewReactorState(nonce int64, payload *FnVotePayload, valSet *types.ValidatorSet) *ReactorState {
 	return &ReactorState{
 		SeenRequestID:  0,
-		CurrentVoteSet: *NewEmptyVoteSet(nonce, valSet),
+		CurrentVoteSet: nil,
 	}
 }
 
@@ -47,6 +51,10 @@ type FnExecutionRequest struct {
 
 func (f *FnExecutionRequest) Marshal() ([]byte, error) {
 	return cdc.MarshalBinaryLengthPrefixed(f)
+}
+
+func (f *FnExecutionRequest) Unmarshal(bz []byte) error {
+	return cdc.UnmarshalBinaryLengthPrefixed(bz, f)
 }
 
 func (f *FnExecutionRequest) Compare(remoteRequest *FnExecutionRequest) bool {
@@ -61,6 +69,10 @@ type FnExecutionResponse struct {
 
 func (f *FnExecutionResponse) Marshal() ([]byte, error) {
 	return cdc.MarshalBinaryLengthPrefixed(f)
+}
+
+func (f *FnExecutionResponse) Unmarshal(bz []byte) error {
+	return cdc.UnmarshalBinaryLengthPrefixed(bz, f)
 }
 
 func (f *FnExecutionResponse) Compare(remoteResponse *FnExecutionResponse) bool {
@@ -88,6 +100,10 @@ func (f *FnVotePayload) Marshal() ([]byte, error) {
 	return cdc.MarshalBinaryLengthPrefixed(f)
 }
 
+func (f *FnVotePayload) Unmarshal(bz []byte) error {
+	return cdc.UnmarshalBinaryLengthPrefixed(bz, f)
+}
+
 func (f *FnVotePayload) Compare(remotePayload *FnVotePayload) bool {
 	if !f.Request.Compare(&remotePayload.Request) {
 		return false
@@ -108,7 +124,7 @@ type FnVoteSet struct {
 	ValidatorAddresses [][]byte       `json:"validator_address"`
 }
 
-func NewEmptyVoteSet(nonce int64, valSet *types.ValidatorSet) *FnVoteSet {
+func NewVoteSet(nonce int64, payload *FnVotePayload, valSet *types.ValidatorSet) *FnVoteSet {
 	voteBitArray := cmn.NewBitArray(valSet.Size())
 	signatures := make([][]byte, valSet.Size())
 	validatorAddresses := make([][]byte, valSet.Size())
@@ -118,6 +134,7 @@ func NewEmptyVoteSet(nonce int64, valSet *types.ValidatorSet) *FnVoteSet {
 		VoteBitArray:       voteBitArray,
 		Signatures:         signatures,
 		ValidatorAddresses: validatorAddresses,
+		Payload:            payload,
 	}
 }
 
@@ -223,4 +240,5 @@ func RegisterFnConsensusTypes() {
 	cdc.RegisterConcrete(&FnVoteSet{}, "tendermint/fnConsensusReactor/FnVoteSet", nil)
 	cdc.RegisterConcrete(&FnVotePayload{}, "tendermint/fnConsensusReactor/FnVotePayload", nil)
 	cdc.RegisterConcrete(&PeerInfo{}, "tendermint/fnConsensusReactor/PeerInfo", nil)
+	cdc.RegisterConcrete(&ReactorState{}, "tendermint/fnConsensusReactor/ReactorState", nil)
 }
