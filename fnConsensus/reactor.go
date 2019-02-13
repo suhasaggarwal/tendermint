@@ -1,6 +1,8 @@
 package fnConsensus
 
 import (
+	"sync"
+
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/p2p/conn"
 
@@ -14,6 +16,7 @@ type FnConsensusReactor struct {
 	p2p.BaseReactor
 
 	connectedPeers map[p2p.ID]p2p.Peer
+	mtx            sync.RWMutex
 	state          *ReactorState
 	db             dbm.DB
 }
@@ -60,6 +63,8 @@ func (f *FnConsensusReactor) GetChannels() []*conn.ChannelDescriptor {
 
 // AddPeer is called by the switch when a new peer is added.
 func (f *FnConsensusReactor) AddPeer(peer p2p.Peer) {
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
 	f.connectedPeers[peer.ID()] = peer
 	// Start go routine for state sync
 	// Start go routine for vote sync
@@ -68,8 +73,11 @@ func (f *FnConsensusReactor) AddPeer(peer p2p.Peer) {
 // RemovePeer is called by the switch when the peer is stopped (due to error
 // or other reason).
 func (f *FnConsensusReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
 	// Stop go routine for state sync
 	// Stop go routine for vote sync
+	delete(f.connectedPeers, peer.ID())
 }
 
 // Receive is called when msgBytes is received from peer.

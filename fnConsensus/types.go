@@ -19,6 +19,14 @@ var ErrFnVoteAlreadyCasted = errors.New("Fn vote is already casted")
 type RequestPeerReactorState struct {
 }
 
+func (r *RequestPeerReactorState) Marshal() ([]byte, error) {
+	return cdc.MarshalBinaryLengthPrefixed(r)
+}
+
+func (r *RequestPeerReactorState) Unmarshal(bz []byte) error {
+	return cdc.UnmarshalBinaryLengthPrefixed(bz, r)
+}
+
 type ReactorState struct {
 	SeenRequestID  int64
 	CurrentVoteSet *FnVoteSet
