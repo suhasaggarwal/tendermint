@@ -112,6 +112,7 @@ func (f *FnConsensusReactor) Receive(chID byte, peer p2p.Peer, msgBytes []byte) 
 		}
 
 		// TODO: Check nonce with mainnet before accepting remote vote set
+
 		if f.state.CurrentVoteSets[remoteVoteSet.GetFnID()] == nil {
 			f.state.CurrentVoteSets[remoteVoteSet.GetFnID()] = remoteVoteSet
 		} else {
@@ -122,13 +123,13 @@ func (f *FnConsensusReactor) Receive(chID byte, peer p2p.Peer, msgBytes []byte) 
 		}
 
 		if f.areWeValidator() {
-			// Add our vote
+			// TODO: Add our vote
 			if f.state.CurrentVoteSets[remoteVoteSet.GetFnID()].IsMaj23(currentState.Validators) {
-				// Inform oracle and return
+				// TODO: Inform oracle and return
 			}
 		}
 
-		// Propogate voteset to all nodes if voteSet is not identical to the one sent by Peer, otherwise send to all nodes minus peer who sent it
+		// TODO: Propogate voteset to all nodes if voteSet is not identical to the one sent by Peer, otherwise send to all nodes minus peer who sent it
 
 		break
 	default:
