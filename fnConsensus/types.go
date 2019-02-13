@@ -31,21 +31,46 @@ func (r *RequestPeerReactorState) Unmarshal(bz []byte) error {
 }
 
 type ReactorState struct {
-	CurrentVoteSet *FnVoteSet
+	CurrentVoteSets map[string]*FnVoteSet
 }
 
 func (p *ReactorState) Marshal() ([]byte, error) {
-	return cdc.MarshalBinaryLengthPrefixed(p)
+	voteSetMarshallable := &voteSetMarshallable{
+		VoteSets: make([]*FnVoteSet, len(p.CurrentVoteSets)),
+	}
+
+	i := 0
+	for _, voteSet := range p.CurrentVoteSets {
+		voteSetMarshallable.VoteSets[i] = voteSet
+		i++
+	}
+
+	return cdc.MarshalBinaryLengthPrefixed(voteSetMarshallable)
 }
 
 func (p *ReactorState) Unmarshal(bz []byte) error {
-	return cdc.UnmarshalBinaryLengthPrefixed(bz, p)
+	voteSetMarshallable := &voteSetMarshallable{}
+	if err := cdc.UnmarshalBinaryLengthPrefixed(bz, voteSetMarshallable); err != nil {
+		return err
+	}
+
+	p.CurrentVoteSets = make(map[string]*FnVoteSet)
+
+	for _, voteSet := range voteSetMarshallable.VoteSets {
+		p.CurrentVoteSets[voteSet.Payload.Request.FnID] = voteSet
+	}
+
+	return nil
 }
 
 func NewReactorState(nonce int64, payload *FnVotePayload, valSet *types.ValidatorSet) *ReactorState {
 	return &ReactorState{
-		CurrentVoteSet: nil,
+		CurrentVoteSets: make(map[string]*FnVoteSet),
 	}
+}
+
+type voteSetMarshallable struct {
+	VoteSets []*FnVoteSet
 }
 
 type FnExecutionRequest struct {
@@ -95,8 +120,8 @@ func (f *FnExecutionResponse) Compare(remoteResponse *FnExecutionResponse) bool 
 }
 
 type FnVotePayload struct {
-	Request  FnExecutionRequest  `json:"fn_execution_request"`
-	Response FnExecutionResponse `json:"fn_execution_response"`
+	Request  *FnExecutionRequest  `json:"fn_execution_request"`
+	Response *FnExecutionResponse `json:"fn_execution_response"`
 }
 
 func (f *FnVotePayload) Marshal() ([]byte, error) {
@@ -107,12 +132,24 @@ func (f *FnVotePayload) Unmarshal(bz []byte) error {
 	return cdc.UnmarshalBinaryLengthPrefixed(bz, f)
 }
 
-func (f *FnVotePayload) Compare(remotePayload *FnVotePayload) bool {
-	if !f.Request.Compare(&remotePayload.Request) {
+func (f *FnVotePayload) IsValid() bool {
+	if f.Request == nil || f.Response == nil {
 		return false
 	}
 
-	if !f.Response.Compare(&remotePayload.Response) {
+	return true
+}
+
+func (f *FnVotePayload) Compare(remotePayload *FnVotePayload) bool {
+	if remotePayload == nil || remotePayload.Request == nil || remotePayload.Response == nil {
+		return false
+	}
+
+	if !f.Request.Compare(remotePayload.Request) {
+		return false
+	}
+
+	if !f.Response.Compare(remotePayload.Response) {
 		return false
 	}
 
@@ -120,6 +157,8 @@ func (f *FnVotePayload) Compare(remotePayload *FnVotePayload) bool {
 }
 
 type FnVoteSet struct {
+	ChainID            string         `json:"chain_id"`
+	TotalVotingPower   int64          `json:"total_voting_power"`
 	Nonce              int64          `json:"nonce"`
 	CreationTime       int64          `json:"creation_time"`
 	ExpiresIn          int64          `json:"expires_in"`
@@ -152,6 +191,10 @@ func (voteSet *FnVoteSet) Unmarshal(bz []byte) error {
 }
 
 func (voteSet *FnVoteSet) CannonicalCompare(remoteVoteSet *FnVoteSet) bool {
+	if remoteVoteSet.Payload == nil {
+		return false
+	}
+
 	if voteSet.Nonce != remoteVoteSet.Nonce {
 		return false
 	}
@@ -212,34 +255,50 @@ func (voteSet *FnVoteSet) IsExpired() bool {
 	return expiryTime.Before(time.Now().UTC())
 }
 
-// Should be the first function to be invoked on vote set received from Peer
-func (voteSet *FnVoteSet) Meta(chainID string, currentValidatorSet *types.ValidatorSet) *fnVoteSetMeta {
-	votesetMeta := &fnVoteSetMeta{
-		IsValid:          true,
-		IsMaj23:          false,
-		TotalVotingPower: 0,
-	}
+func (voteSet *FnVoteSet) GetFnID() string {
+	return voteSet.Payload.Request.FnID
+}
 
+func (voteSet *FnVoteSet) IsMaj23(currentValidatorSet *types.ValidatorSet) bool {
+	return voteSet.TotalVotingPower >= currentValidatorSet.TotalVotingPower()*2/3+1
+}
+
+// Should be the first function to be invoked on vote set received from Peer
+func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.ValidatorSet, registry *FnRegistry) bool {
 	numValidators := voteSet.VoteBitArray.Size()
 
+	var calculatedVotingPower int64
+
+	if voteSet.Payload == nil {
+		return false
+	}
+
+	if !voteSet.Payload.IsValid() {
+		return false
+	}
+
+	if registry.Get(voteSet.GetFnID()) == nil {
+		return false
+	}
+
+	if voteSet.ChainID != chainID {
+		return false
+	}
+
 	if voteSet.IsExpired() {
-		votesetMeta.IsValid = false
-		return votesetMeta
+		return false
 	}
 
 	if numValidators != len(voteSet.ValidatorAddresses) {
-		votesetMeta.IsValid = false
-		return votesetMeta
+		return false
 	}
 
 	if numValidators != len(voteSet.Signatures) {
-		votesetMeta.IsValid = false
-		return votesetMeta
+		return false
 	}
 
 	if numValidators != currentValidatorSet.Size() {
-		votesetMeta.IsValid = false
-		return votesetMeta
+		return false
 	}
 
 	currentValidatorSet.Iterate(func(i int, val *types.Validator) bool {
@@ -247,18 +306,18 @@ func (voteSet *FnVoteSet) Meta(chainID string, currentValidatorSet *types.Valida
 			return true
 		}
 		if err := voteSet.VerifyValidatorSign(i, chainID, val.PubKey); err != nil {
-			votesetMeta.IsValid = false
 			return false
 		}
-		votesetMeta.TotalVotingPower += val.VotingPower
+		calculatedVotingPower += val.VotingPower
 		return true
 	})
 
-	if votesetMeta.TotalVotingPower >= currentValidatorSet.TotalVotingPower()*2/3+1 {
-		votesetMeta.IsMaj23 = true
+	// Voting power contained in VoteSet should match the calculated voting power
+	if voteSet.TotalVotingPower != calculatedVotingPower {
+		return false
 	}
 
-	return votesetMeta
+	return true
 }
 
 func (voteSet *FnVoteSet) VerifyValidatorSign(validatorIndex int, chainID string, pubKey crypto.PubKey) error {
@@ -301,13 +360,6 @@ func (voteSet *FnVoteSet) Merge(anotherSet *FnVoteSet) error {
 	return nil
 }
 
-// Internal structure to hold info derived from FnVoteSet
-type fnVoteSetMeta struct {
-	IsValid          bool
-	TotalVotingPower int64
-	IsMaj23          bool
-}
-
 func RegisterFnConsensusTypes() {
 	cdc.RegisterConcrete(&FnExecutionRequest{}, "tendermint/fnConsensusReactor/FnExecutionRequest", nil)
 	cdc.RegisterConcrete(&FnExecutionResponse{}, "tendermint/fnConsensusReactor/FnExecutionResponse", nil)
@@ -315,4 +367,5 @@ func RegisterFnConsensusTypes() {
 	cdc.RegisterConcrete(&FnVotePayload{}, "tendermint/fnConsensusReactor/FnVotePayload", nil)
 	cdc.RegisterConcrete(&RequestPeerReactorState{}, "tendermint/fnConsensusReactor/RequestPeerReactorState", nil)
 	cdc.RegisterConcrete(&ReactorState{}, "tendermint/fnConsensusReactor/ReactorState", nil)
+	cdc.RegisterConcrete(&voteSetMarshallable{}, "tendermint/fnConsensusReactor/voteSetMarshallable", nil)
 }
