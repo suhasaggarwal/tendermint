@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/tendermint/tendermint/crypto"
 	cmn "github.com/tendermint/tendermint/libs/common"
@@ -122,6 +123,8 @@ func (f *FnVotePayload) Compare(remotePayload *FnVotePayload) bool {
 
 type FnVoteSet struct {
 	Nonce              int64          `json:"nonce"`
+	CreationTime       int64          `json:"creation_time"`
+	ExpiresIn          int64          `json:"expires_in"`
 	VoteBitArray       *cmn.BitArray  `json:"vote_bitarray"`
 	Payload            *FnVotePayload `json:"vote_payload"`
 	Signatures         [][]byte       `json:"signature"`
@@ -169,7 +172,8 @@ func (voteSet *FnVoteSet) SignBytes(chainID string, validatorAddress []byte) ([]
 		return nil, err
 	}
 
-	prefix := []byte(fmt.Sprintf("NC:%d|CD:%s|VA:%s|PL:", voteSet.Nonce, chainID, hex.EncodeToString(validatorAddress)))
+	prefix := []byte(fmt.Sprintf("NC:%d|CT:%d|EI:%d|CD:%s|VA:%s|PL:", voteSet.Nonce, voteSet.CreationTime,
+		voteSet.ExpiresIn, chainID, hex.EncodeToString(validatorAddress)))
 
 	signBytes := make([]byte, len(prefix)+len(payloadBytes))
 	copy(signBytes, prefix)
@@ -194,9 +198,17 @@ func (voteSet *FnVoteSet) verifyInternal(signature []byte, chainID string, valid
 	return nil
 }
 
+func (voteSet *FnVoteSet) IsExpired() bool {
+	creationTime := time.Unix(voteSet.CreationTime, 0)
+	expiresIn := time.Duration(voteSet.ExpiresIn)
+	expiryTime := creationTime.Add(expiresIn)
+
+	return expiryTime.Before(time.Now().UTC())
+}
+
 // Should be the first function to be invoked on vote set received from Peer
-func (voteSet *FnVoteSet) GetInfo(chainID string, currentValidatorSet *types.ValidatorSet) *fnVoteInfo {
-	voteInfo := &fnVoteInfo{
+func (voteSet *FnVoteSet) Meta(chainID string, currentValidatorSet *types.ValidatorSet) *fnVoteSetMeta {
+	votesetMeta := &fnVoteSetMeta{
 		IsValid:          true,
 		IsMaj23:          false,
 		TotalVotingPower: 0,
@@ -204,19 +216,24 @@ func (voteSet *FnVoteSet) GetInfo(chainID string, currentValidatorSet *types.Val
 
 	numValidators := voteSet.VoteBitArray.Size()
 
+	if voteSet.IsExpired() {
+		votesetMeta.IsValid = false
+		return votesetMeta
+	}
+
 	if numValidators != len(voteSet.ValidatorAddresses) {
-		voteInfo.IsValid = false
-		return voteInfo
+		votesetMeta.IsValid = false
+		return votesetMeta
 	}
 
 	if numValidators != len(voteSet.Signatures) {
-		voteInfo.IsValid = false
-		return voteInfo
+		votesetMeta.IsValid = false
+		return votesetMeta
 	}
 
 	if numValidators != currentValidatorSet.Size() {
-		voteInfo.IsValid = false
-		return voteInfo
+		votesetMeta.IsValid = false
+		return votesetMeta
 	}
 
 	currentValidatorSet.Iterate(func(i int, val *types.Validator) bool {
@@ -224,18 +241,18 @@ func (voteSet *FnVoteSet) GetInfo(chainID string, currentValidatorSet *types.Val
 			return true
 		}
 		if err := voteSet.VerifyValidatorSign(i, chainID, val.PubKey); err != nil {
-			voteInfo.IsValid = false
+			votesetMeta.IsValid = false
 			return false
 		}
-		voteInfo.TotalVotingPower += val.VotingPower
+		votesetMeta.TotalVotingPower += val.VotingPower
 		return true
 	})
 
-	if voteInfo.TotalVotingPower >= currentValidatorSet.TotalVotingPower()*2/3+1 {
-		voteInfo.IsMaj23 = true
+	if votesetMeta.TotalVotingPower >= currentValidatorSet.TotalVotingPower()*2/3+1 {
+		votesetMeta.IsMaj23 = true
 	}
 
-	return voteInfo
+	return votesetMeta
 }
 
 func (voteSet *FnVoteSet) VerifyValidatorSign(validatorIndex int, chainID string, pubKey crypto.PubKey) error {
@@ -279,7 +296,7 @@ func (voteSet *FnVoteSet) Merge(anotherSet *FnVoteSet) error {
 }
 
 // Internal structure to hold info derived from FnVoteSet
-type fnVoteInfo struct {
+type fnVoteSetMeta struct {
 	IsValid          bool
 	TotalVotingPower int64
 	IsMaj23          bool
