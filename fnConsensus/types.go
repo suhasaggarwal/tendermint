@@ -31,7 +31,6 @@ func (r *RequestPeerReactorState) Unmarshal(bz []byte) error {
 }
 
 type ReactorState struct {
-	SeenRequestID  int64
 	CurrentVoteSet *FnVoteSet
 }
 
@@ -45,7 +44,6 @@ func (p *ReactorState) Unmarshal(bz []byte) error {
 
 func NewReactorState(nonce int64, payload *FnVotePayload, valSet *types.ValidatorSet) *ReactorState {
 	return &ReactorState{
-		SeenRequestID:  0,
 		CurrentVoteSet: nil,
 	}
 }
@@ -143,6 +141,14 @@ func NewVoteSet(nonce int64, payload *FnVotePayload, valSet *types.ValidatorSet)
 		ValidatorAddresses: validatorAddresses,
 		Payload:            payload,
 	}
+}
+
+func (voteSet *FnVoteSet) Marshal() ([]byte, error) {
+	return cdc.MarshalBinaryLengthPrefixed(voteSet)
+}
+
+func (voteSet *FnVoteSet) Unmarshal(bz []byte) error {
+	return cdc.UnmarshalBinaryLengthPrefixed(bz, voteSet)
 }
 
 func (voteSet *FnVoteSet) CannonicalCompare(remoteVoteSet *FnVoteSet) bool {
