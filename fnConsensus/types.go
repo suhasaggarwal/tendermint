@@ -16,6 +16,8 @@ var ErrFnVoteInvalidSignature = errors.New("invalid validator signature")
 var ErrFnVoteNotPresent = errors.New("Fn vote is not present for validator")
 var ErrFnVoteAlreadyCasted = errors.New("Fn vote is already casted")
 
+var ErrFnVoteMergeDiffPayload = errors.New("merging is not allowed, as votes have different payload")
+
 type RequestPeerReactorState struct {
 }
 
@@ -149,6 +151,15 @@ func (voteSet *FnVoteSet) CannonicalCompare(remoteVoteSet *FnVoteSet) bool {
 		return false
 	}
 
+	if len(voteSet.Signatures) != len(remoteVoteSet.Signatures) {
+		return false
+	}
+
+	// For misbehaving nodes
+	if len(voteSet.ValidatorAddresses) != len(remoteVoteSet.ValidatorAddresses) {
+		return false
+	}
+
 	return true
 }
 
@@ -183,11 +194,29 @@ func (voteSet *FnVoteSet) verifyInternal(signature []byte, chainID string, valid
 	return nil
 }
 
+// Should be the first function to be invoked on vote set received from Peer
 func (voteSet *FnVoteSet) GetInfo(chainID string, currentValidatorSet *types.ValidatorSet) *fnVoteInfo {
 	voteInfo := &fnVoteInfo{
 		IsValid:          true,
 		IsMaj23:          false,
 		TotalVotingPower: 0,
+	}
+
+	numValidators := voteSet.VoteBitArray.Size()
+
+	if numValidators != len(voteSet.ValidatorAddresses) {
+		voteInfo.IsValid = false
+		return voteInfo
+	}
+
+	if numValidators != len(voteSet.Signatures) {
+		voteInfo.IsValid = false
+		return voteInfo
+	}
+
+	if numValidators != currentValidatorSet.Size() {
+		voteInfo.IsValid = false
+		return voteInfo
 	}
 
 	currentValidatorSet.Iterate(func(i int, val *types.Validator) bool {
@@ -225,6 +254,26 @@ func (voteSet *FnVoteSet) AddSignature(validatorIndex int, validatorAddress []by
 	voteSet.Signatures[validatorIndex] = signature
 	voteSet.ValidatorAddresses[validatorIndex] = validatorAddress
 	voteSet.VoteBitArray.SetIndex(validatorIndex, true)
+
+	return nil
+}
+
+func (voteSet *FnVoteSet) Merge(anotherSet *FnVoteSet) error {
+	if !voteSet.CannonicalCompare(anotherSet) {
+		return ErrFnVoteMergeDiffPayload
+	}
+
+	numValidators := voteSet.VoteBitArray.Size()
+
+	for i := 0; i < numValidators; i++ {
+		if voteSet.VoteBitArray.GetIndex(i) || !anotherSet.VoteBitArray.GetIndex(i) {
+			continue
+		}
+
+		voteSet.Signatures[i] = anotherSet.Signatures[i]
+		voteSet.ValidatorAddresses[i] = anotherSet.Signatures[i]
+		voteSet.VoteBitArray.SetIndex(i, true)
+	}
 
 	return nil
 }
