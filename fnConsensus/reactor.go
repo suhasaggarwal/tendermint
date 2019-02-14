@@ -8,6 +8,7 @@ import (
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/p2p/conn"
 	"github.com/tendermint/tendermint/state"
+	"github.com/tendermint/tendermint/types"
 
 	dbm "github.com/tendermint/tendermint/libs/db"
 )
@@ -71,8 +72,6 @@ func (f *FnConsensusReactor) AddPeer(peer p2p.Peer) {
 	f.mtx.Lock()
 	defer f.mtx.Unlock()
 	f.connectedPeers[peer.ID()] = peer
-	// Start go routine for state sync
-	// Start go routine for vote sync
 }
 
 // RemovePeer is called by the switch when the peer is stopped (due to error
@@ -80,13 +79,12 @@ func (f *FnConsensusReactor) AddPeer(peer p2p.Peer) {
 func (f *FnConsensusReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
 	f.mtx.Lock()
 	defer f.mtx.Unlock()
-	// Stop go routine for state sync
-	// Stop go routine for vote sync
 	delete(f.connectedPeers, peer.ID())
 }
 
-func (f *FnConsensusReactor) areWeValidator() bool {
-	return true
+func (f *FnConsensusReactor) areWeValidator(currentValidatorSet *types.ValidatorSet) bool {
+	validatorIndex, _ := currentValidatorSet.GetByAddress(f.nodePrivKey.PubKey().Address())
+	return validatorIndex != -1
 }
 
 // Receive is called when msgBytes is received from peer.
@@ -118,41 +116,54 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 		}
 
 		hasVoteChanged := false
+		fnID := remoteVoteSet.GetFnID()
 
 		// TODO: Check nonce with mainnet before accepting remote vote set
 
-		if f.state.CurrentVoteSets[remoteVoteSet.GetFnID()] == nil {
-			f.state.CurrentVoteSets[remoteVoteSet.GetFnID()] = remoteVoteSet
+		if f.state.CurrentVoteSets[fnID] == nil {
+			f.state.CurrentVoteSets[fnID] = remoteVoteSet
 			hasVoteChanged = false
 		} else {
-			if hasVoteChanged, err = f.state.CurrentVoteSets[remoteVoteSet.Payload.Request.FnID].Merge(remoteVoteSet); err != nil {
+			if hasVoteChanged, err = f.state.CurrentVoteSets[fnID].Merge(remoteVoteSet); err != nil {
 				f.Logger.Error("FnConsensusReactor: Unable to merge remote vote set into our own.", "error:", err)
 				return
 			}
 		}
 
-		if f.areWeValidator() {
-			// TODO: Execute Fn and Add our vote
+		if f.areWeValidator(currentState.Validators) {
+
+			validatorIndex, _ := currentState.Validators.GetByAddress(f.nodePrivKey.PubKey().Address())
+
+			fn := f.fnRegistry.Get(fnID)
+
+			hash, signature, err := fn.GetMessageAndSignature()
+			if err != nil {
+				f.Logger.Error("FnConsensusReactor: fn.GetMessageAndSignature returned an error, ignoring..")
+				return
+			}
+
+			err = f.state.CurrentVoteSets[fnID].AddVote(&FnIndividualExecutionResponse{
+				Status:          0,
+				Error:           "",
+				Hash:            hash,
+				OracleSignature: signature,
+			}, validatorIndex, f.nodePrivKey)
+			if err != nil {
+				f.Logger.Error("FnConsensusError: unable to add vote to current voteset, ignoring...")
+				return
+			}
 
 			hasVoteChanged = true
 
-			if f.state.CurrentVoteSets[remoteVoteSet.GetFnID()].IsMaj23(currentState.Validators) {
-				fn := f.fnRegistry.Get(remoteVoteSet.GetFnID())
-
-				// Not expected error
-				if fn == nil {
-					f.Logger.Error(fmt.Sprintf("FnConsensusReactor: Unable to find FnID: %s inside fnRegistry", remoteVoteSet.GetFnID()))
-				}
-
-				// TODO: Change this to proper call
-				fn.SubmitMultiSignedMessage(f.state.CurrentVoteSets[remoteVoteSet.GetFnID()].Payload.Response.Hash, nil)
+			if f.state.CurrentVoteSets[fnID].IsMaj23(currentState.Validators) {
+				fn.SubmitMultiSignedMessage(f.state.CurrentVoteSets[fnID].Payload.Response.Hash, f.state.CurrentVoteSets[fnID].Payload.Response.OracleSignatures)
 				return
 			}
 		}
 
-		marshalledBytes, err := f.state.CurrentVoteSets[remoteVoteSet.GetFnID()].Marshal()
+		marshalledBytes, err := f.state.CurrentVoteSets[fnID].Marshal()
 		if err != nil {
-			f.Logger.Error(fmt.Sprintf("FnConsensusReactor: Unable to marshal currentVoteSet at FnID: %s", remoteVoteSet.GetFnID()))
+			f.Logger.Error(fmt.Sprintf("FnConsensusReactor: Unable to marshal currentVoteSet at FnID: %s", fnID))
 			return
 		}
 

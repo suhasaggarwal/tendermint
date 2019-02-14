@@ -10,7 +10,7 @@ var ErrFnIDIsTaken = errors.New("FnID is already used by another Fn Object")
 type Fn interface {
 	GetNonce() (int64, error)
 	SubmitMultiSignedMessage(message []byte, signatures [][]byte)
-	GetMessage() ([]byte, error)
+	GetMessageAndSignature() ([]byte, []byte, error)
 }
 
 // Transient registry, need to rebuild upon restart
