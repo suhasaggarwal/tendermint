@@ -289,11 +289,11 @@ func (f *FnVotePayload) SignBytes(validatorIndex int) ([]byte, error) {
 	return signBytes, nil
 }
 
-func NewFnVotePayload(fnRequest *FnExecutionRequest, fnResponse *FnExecutionResponse) (*FnVotePayload, error) {
+func NewFnVotePayload(fnRequest *FnExecutionRequest, fnResponse *FnExecutionResponse) *FnVotePayload {
 	return &FnVotePayload{
 		Request:  fnRequest,
 		Response: fnResponse,
-	}, nil
+	}
 }
 
 type FnVoteSet struct {
