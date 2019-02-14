@@ -445,9 +445,11 @@ func (voteSet *FnVoteSet) AddSignature(validatorIndex int, validatorAddress []by
 	return nil
 }
 
-func (voteSet *FnVoteSet) Merge(anotherSet *FnVoteSet) error {
+func (voteSet *FnVoteSet) Merge(anotherSet *FnVoteSet) (bool, error) {
+	hasChanged := false
+
 	if !voteSet.CannonicalCompare(anotherSet) {
-		return ErrFnVoteMergeDiffPayload
+		return hasChanged, ErrFnVoteMergeDiffPayload
 	}
 
 	numValidators := voteSet.VoteBitArray.Size()
@@ -457,12 +459,14 @@ func (voteSet *FnVoteSet) Merge(anotherSet *FnVoteSet) error {
 			continue
 		}
 
+		hasChanged = true
+
 		voteSet.ValidatorSignatures[i] = anotherSet.ValidatorSignatures[i]
 		voteSet.ValidatorAddresses[i] = anotherSet.ValidatorAddresses[i]
 		voteSet.VoteBitArray.SetIndex(i, true)
 	}
 
-	return nil
+	return hasChanged, nil
 }
 
 func RegisterFnConsensusTypes() {
