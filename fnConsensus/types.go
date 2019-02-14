@@ -30,17 +30,6 @@ func (f *FnIndividualExecutionResponse) Marshal() ([]byte, error) {
 	return cdc.MarshalBinaryLengthPrefixed(f)
 }
 
-type RequestPeerReactorState struct {
-}
-
-func (r *RequestPeerReactorState) Marshal() ([]byte, error) {
-	return cdc.MarshalBinaryLengthPrefixed(r)
-}
-
-func (r *RequestPeerReactorState) Unmarshal(bz []byte) error {
-	return cdc.UnmarshalBinaryLengthPrefixed(bz, r)
-}
-
 type ReactorState struct {
 	CurrentVoteSets map[string]*FnVoteSet
 }
@@ -401,6 +390,12 @@ func (voteSet *FnVoteSet) CannonicalCompare(remoteVoteSet *FnVoteSet) bool {
 		return false
 	}
 
+	for i := 0; i < len(voteSet.ValidatorAddresses); i++ {
+		if bytes.Compare(voteSet.ValidatorAddresses[i], remoteVoteSet.ValidatorAddresses[i]) != 0 {
+			return false
+		}
+	}
+
 	return true
 }
 
@@ -586,7 +581,7 @@ func RegisterFnConsensusTypes() {
 	cdc.RegisterConcrete(&FnExecutionResponse{}, "tendermint/fnConsensusReactor/FnExecutionResponse", nil)
 	cdc.RegisterConcrete(&FnVoteSet{}, "tendermint/fnConsensusReactor/FnVoteSet", nil)
 	cdc.RegisterConcrete(&FnVotePayload{}, "tendermint/fnConsensusReactor/FnVotePayload", nil)
-	cdc.RegisterConcrete(&RequestPeerReactorState{}, "tendermint/fnConsensusReactor/RequestPeerReactorState", nil)
+	cdc.RegisterConcrete(&FnIndividualExecutionResponse{}, "tendermint/fnConsensusReactor/FnIndividualExecutionResponse", nil)
 	cdc.RegisterConcrete(&ReactorState{}, "tendermint/fnConsensusReactor/ReactorState", nil)
 	cdc.RegisterConcrete(&voteSetMarshallable{}, "tendermint/fnConsensusReactor/voteSetMarshallable", nil)
 }
