@@ -157,15 +157,15 @@ func (f *FnVotePayload) Compare(remotePayload *FnVotePayload) bool {
 }
 
 type FnVoteSet struct {
-	ChainID            string         `json:"chain_id"`
-	TotalVotingPower   int64          `json:"total_voting_power"`
-	Nonce              int64          `json:"nonce"`
-	CreationTime       int64          `json:"creation_time"`
-	ExpiresIn          int64          `json:"expires_in"`
-	VoteBitArray       *cmn.BitArray  `json:"vote_bitarray"`
-	Payload            *FnVotePayload `json:"vote_payload"`
-	Signatures         [][]byte       `json:"signature"`
-	ValidatorAddresses [][]byte       `json:"validator_address"`
+	ChainID             string         `json:"chain_id"`
+	TotalVotingPower    int64          `json:"total_voting_power"`
+	Nonce               int64          `json:"nonce"`
+	CreationTime        int64          `json:"creation_time"`
+	ExpiresIn           int64          `json:"expires_in"`
+	VoteBitArray        *cmn.BitArray  `json:"vote_bitarray"`
+	Payload             *FnVotePayload `json:"vote_payload"`
+	ValidatorSignatures [][]byte       `json:"signature"`
+	ValidatorAddresses  [][]byte       `json:"validator_address"`
 }
 
 func NewVoteSet(nonce int64, payload *FnVotePayload, valSet *types.ValidatorSet) *FnVoteSet {
@@ -174,11 +174,11 @@ func NewVoteSet(nonce int64, payload *FnVotePayload, valSet *types.ValidatorSet)
 	validatorAddresses := make([][]byte, valSet.Size())
 
 	return &FnVoteSet{
-		Nonce:              0,
-		VoteBitArray:       voteBitArray,
-		Signatures:         signatures,
-		ValidatorAddresses: validatorAddresses,
-		Payload:            payload,
+		Nonce:               0,
+		VoteBitArray:        voteBitArray,
+		ValidatorSignatures: signatures,
+		ValidatorAddresses:  validatorAddresses,
+		Payload:             payload,
 	}
 }
 
@@ -203,7 +203,7 @@ func (voteSet *FnVoteSet) CannonicalCompare(remoteVoteSet *FnVoteSet) bool {
 		return false
 	}
 
-	if len(voteSet.Signatures) != len(remoteVoteSet.Signatures) {
+	if len(voteSet.ValidatorSignatures) != len(remoteVoteSet.ValidatorSignatures) {
 		return false
 	}
 
@@ -293,7 +293,7 @@ func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.Val
 		return false
 	}
 
-	if numValidators != len(voteSet.Signatures) {
+	if numValidators != len(voteSet.ValidatorSignatures) {
 		return false
 	}
 
@@ -325,7 +325,7 @@ func (voteSet *FnVoteSet) VerifyValidatorSign(validatorIndex int, chainID string
 		return ErrFnVoteNotPresent
 	}
 
-	return voteSet.verifyInternal(voteSet.Signatures[validatorIndex], chainID, voteSet.ValidatorAddresses[validatorIndex], pubKey)
+	return voteSet.verifyInternal(voteSet.ValidatorSignatures[validatorIndex], chainID, voteSet.ValidatorAddresses[validatorIndex], pubKey)
 }
 
 func (voteSet *FnVoteSet) AddSignature(validatorIndex int, validatorAddress []byte, signature []byte) error {
@@ -333,7 +333,7 @@ func (voteSet *FnVoteSet) AddSignature(validatorIndex int, validatorAddress []by
 		return ErrFnVoteAlreadyCasted
 	}
 
-	voteSet.Signatures[validatorIndex] = signature
+	voteSet.ValidatorSignatures[validatorIndex] = signature
 	voteSet.ValidatorAddresses[validatorIndex] = validatorAddress
 	voteSet.VoteBitArray.SetIndex(validatorIndex, true)
 
@@ -352,8 +352,8 @@ func (voteSet *FnVoteSet) Merge(anotherSet *FnVoteSet) error {
 			continue
 		}
 
-		voteSet.Signatures[i] = anotherSet.Signatures[i]
-		voteSet.ValidatorAddresses[i] = anotherSet.Signatures[i]
+		voteSet.ValidatorSignatures[i] = anotherSet.ValidatorSignatures[i]
+		voteSet.ValidatorAddresses[i] = anotherSet.ValidatorAddresses[i]
 		voteSet.VoteBitArray.SetIndex(i, true)
 	}
 
