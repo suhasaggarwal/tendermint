@@ -124,6 +124,18 @@ func (f *FnExecutionResponse) Unmarshal(bz []byte) error {
 	return cdc.UnmarshalBinaryLengthPrefixed(bz, f)
 }
 
+func (f *FnExecutionResponse) IsValid(currentValidatorSet *types.ValidatorSet) bool {
+	if f.Hash == nil {
+		return false
+	}
+
+	if currentValidatorSet.Size() != len(f.OracleSignatures) {
+		return false
+	}
+
+	return true
+}
+
 func (f *FnExecutionResponse) CannonicalCompare(remoteResponse *FnExecutionResponse) bool {
 	if f.Error != remoteResponse.Error {
 		return false
@@ -182,8 +194,12 @@ func (f *FnVotePayload) Unmarshal(bz []byte) error {
 	return cdc.UnmarshalBinaryLengthPrefixed(bz, f)
 }
 
-func (f *FnVotePayload) IsValid() bool {
+func (f *FnVotePayload) IsValid(currentValidatorSet *types.ValidatorSet) bool {
 	if f.Request == nil || f.Response == nil {
+		return false
+	}
+
+	if !f.Response.IsValid(currentValidatorSet) {
 		return false
 	}
 
@@ -319,6 +335,15 @@ func (voteSet *FnVoteSet) SignBytes(chainID string, validatorIndex int, validato
 	return signBytes, nil
 }
 
+func (voteSet *FnVoteSet) VerifyValidatorSign(validatorIndex int, chainID string, pubKey crypto.PubKey) error {
+	if !voteSet.VoteBitArray.GetIndex(validatorIndex) {
+		return ErrFnVoteNotPresent
+	}
+
+	return voteSet.verifyInternal(voteSet.ValidatorSignatures[validatorIndex], chainID, validatorIndex,
+		voteSet.ValidatorAddresses[validatorIndex], pubKey)
+}
+
 func (voteSet *FnVoteSet) verifyInternal(signature []byte, chainID string, validatorIndex int, validatorAddress []byte, pubKey crypto.PubKey) error {
 	if !bytes.Equal(pubKey.Address(), validatorAddress) {
 		return ErrFnVoteInvalidValidatorAddress
@@ -361,7 +386,7 @@ func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.Val
 		return false
 	}
 
-	if !voteSet.Payload.IsValid() {
+	if !voteSet.Payload.IsValid(currentValidatorSet) {
 		return false
 	}
 
@@ -406,15 +431,6 @@ func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.Val
 	}
 
 	return true
-}
-
-func (voteSet *FnVoteSet) VerifyValidatorSign(validatorIndex int, chainID string, pubKey crypto.PubKey) error {
-	if !voteSet.VoteBitArray.GetIndex(validatorIndex) {
-		return ErrFnVoteNotPresent
-	}
-
-	return voteSet.verifyInternal(voteSet.ValidatorSignatures[validatorIndex], chainID, validatorIndex,
-		voteSet.ValidatorAddresses[validatorIndex], pubKey)
 }
 
 func (voteSet *FnVoteSet) AddSignature(validatorIndex int, validatorAddress []byte, signature []byte) error {
