@@ -16,17 +16,18 @@ var ErrFnVoteInvalidValidatorAddress = errors.New("invalid validator address for
 var ErrFnVoteInvalidSignature = errors.New("invalid validator signature")
 var ErrFnVoteNotPresent = errors.New("Fn vote is not present for validator")
 var ErrFnVoteAlreadyCasted = errors.New("Fn vote is already casted")
+var ErrFnResponseSignatureAlreadyPresent = errors.New("Fn Response signature is already present")
 
 var ErrFnVoteMergeDiffPayload = errors.New("merging is not allowed, as votes have different payload")
 
-type fnIndividualExecutionResponse struct {
+type FnIndividualExecutionResponse struct {
 	Status          int64
 	Error           string
 	Hash            []byte
 	OracleSignature []byte
 }
 
-func (f *fnIndividualExecutionResponse) Marshal() ([]byte, error) {
+func (f *FnIndividualExecutionResponse) Marshal() ([]byte, error) {
 	return cdc.MarshalBinaryLengthPrefixed(f)
 }
 
@@ -157,7 +158,7 @@ func (f *FnExecutionResponse) CannonicalCompare(remoteResponse *FnExecutionRespo
 }
 
 func (f *FnExecutionResponse) SignBytes(validatorIndex int) ([]byte, error) {
-	individualResponse := &fnIndividualExecutionResponse{
+	individualResponse := &FnIndividualExecutionResponse{
 		Status:          f.Status,
 		Error:           f.Error,
 		Hash:            f.Hash,
@@ -179,6 +180,15 @@ func (f *FnExecutionResponse) Compare(remoteResponse *FnExecutionResponse) bool 
 	}
 
 	return true
+}
+
+func (f *FnExecutionResponse) AddSignature(validatorIndex int, signature []byte) error {
+	if f.OracleSignatures[validatorIndex] != nil {
+		return ErrFnResponseSignatureAlreadyPresent
+	}
+
+	f.OracleSignatures[validatorIndex] = signature
+	return nil
 }
 
 type FnVotePayload struct {
@@ -277,8 +287,13 @@ func NewVoteSet(nonce int64, payload *FnVotePayload, valSet *types.ValidatorSet)
 	signatures := make([][]byte, valSet.Size())
 	validatorAddresses := make([][]byte, valSet.Size())
 
+	valSet.Iterate(func(index int, validator *types.Validator) bool {
+		validatorAddresses[index] = validator.Address
+		return true
+	})
+
 	return &FnVoteSet{
-		Nonce:               0,
+		Nonce:               nonce,
 		VoteBitArray:        voteBitArray,
 		ValidatorSignatures: signatures,
 		ValidatorAddresses:  validatorAddresses,
@@ -378,47 +393,56 @@ func (voteSet *FnVoteSet) IsMaj23(currentValidatorSet *types.ValidatorSet) bool 
 
 // Should be the first function to be invoked on vote set received from Peer
 func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.ValidatorSet, registry *FnRegistry) bool {
+	isValid := true
 	numValidators := voteSet.VoteBitArray.Size()
 
 	var calculatedVotingPower int64
 
+	// This if conditions are individual as, we want to pass different errors for each
+	// condition
+
 	if voteSet.Payload == nil {
-		return false
+		isValid = false
+		return isValid
 	}
 
 	if !voteSet.Payload.IsValid(currentValidatorSet) {
-		return false
+		isValid = false
+		return isValid
 	}
 
 	if registry.Get(voteSet.GetFnID()) == nil {
-		return false
+		isValid = false
+		return isValid
 	}
 
 	if voteSet.ChainID != chainID {
-		return false
+		isValid = false
+		return isValid
 	}
 
 	if voteSet.IsExpired() {
-		return false
+		isValid = false
+		return isValid
 	}
 
-	if numValidators != len(voteSet.ValidatorAddresses) {
-		return false
-	}
-
-	if numValidators != len(voteSet.ValidatorSignatures) {
-		return false
-	}
-
-	if numValidators != currentValidatorSet.Size() {
-		return false
+	if numValidators != len(voteSet.ValidatorAddresses) || numValidators != len(voteSet.ValidatorSignatures) || numValidators != currentValidatorSet.Size() {
+		isValid = false
+		return isValid
 	}
 
 	currentValidatorSet.Iterate(func(i int, val *types.Validator) bool {
+		if bytes.Compare(voteSet.ValidatorAddresses[i], val.Address) != 0 {
+			isValid = false
+			return false
+		}
+
 		if !voteSet.VoteBitArray.GetIndex(i) {
 			return true
 		}
+
 		if err := voteSet.VerifyValidatorSign(i, chainID, val.PubKey); err != nil {
+			isValid = false
 			return false
 		}
 		calculatedVotingPower += val.VotingPower
@@ -427,22 +451,11 @@ func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.Val
 
 	// Voting power contained in VoteSet should match the calculated voting power
 	if voteSet.TotalVotingPower != calculatedVotingPower {
+		isValid = false
 		return false
 	}
 
-	return true
-}
-
-func (voteSet *FnVoteSet) AddSignature(validatorIndex int, validatorAddress []byte, signature []byte) error {
-	if voteSet.VoteBitArray.GetIndex(validatorIndex) {
-		return ErrFnVoteAlreadyCasted
-	}
-
-	voteSet.ValidatorSignatures[validatorIndex] = signature
-	voteSet.ValidatorAddresses[validatorIndex] = validatorAddress
-	voteSet.VoteBitArray.SetIndex(validatorIndex, true)
-
-	return nil
+	return isValid
 }
 
 func (voteSet *FnVoteSet) Merge(anotherSet *FnVoteSet) (bool, error) {
