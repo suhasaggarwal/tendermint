@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/p2p/conn"
 	"github.com/tendermint/tendermint/state"
@@ -24,15 +25,18 @@ type FnConsensusReactor struct {
 	chainID        string
 
 	fnRegistry *FnRegistry
+
+	nodePrivKey crypto.PrivKey
 }
 
-func NewFnConsensusReactor(chainID string, fnRegistry *FnRegistry, db dbm.DB, tmStateDB dbm.DB) *FnConsensusReactor {
+func NewFnConsensusReactor(chainID string, nodePrivKey crypto.PrivKey, fnRegistry *FnRegistry, db dbm.DB, tmStateDB dbm.DB) *FnConsensusReactor {
 	reactor := &FnConsensusReactor{
 		connectedPeers: make(map[p2p.ID]p2p.Peer),
 		db:             db,
 		chainID:        chainID,
 		tmStateDB:      tmStateDB,
 		fnRegistry:     fnRegistry,
+		nodePrivKey:    nodePrivKey,
 	}
 
 	reactor.BaseReactor = *p2p.NewBaseReactor("FnConsensusReactor", reactor)
@@ -129,6 +133,7 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 
 		if f.areWeValidator() {
 			// TODO: Execute Fn and Add our vote
+
 			hasVoteChanged = true
 
 			if f.state.CurrentVoteSets[remoteVoteSet.GetFnID()].IsMaj23(currentState.Validators) {
