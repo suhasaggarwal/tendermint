@@ -85,14 +85,23 @@ func (f *FnExecutionRequest) Unmarshal(bz []byte) error {
 	return cdc.UnmarshalBinaryLengthPrefixed(bz, f)
 }
 
-func (f *FnExecutionRequest) Compare(remoteRequest *FnExecutionRequest) bool {
+func (f *FnExecutionRequest) compareInternal(remoteRequest *FnExecutionRequest) bool {
 	return f.FnID != remoteRequest.FnID
 }
 
+func (f *FnExecutionRequest) Compare(remoteRequest *FnExecutionRequest) bool {
+	return f.compareInternal(remoteRequest)
+}
+
+func (f *FnExecutionRequest) CannonicalCompare(remoteRequest *FnExecutionRequest) bool {
+	return f.compareInternal(remoteRequest)
+}
+
 type FnExecutionResponse struct {
-	Status int64
-	Error  string
-	Hash   []byte
+	Status    int64
+	Error     string
+	Hash      []byte
+	Signature []byte
 }
 
 func (f *FnExecutionResponse) Marshal() ([]byte, error) {
@@ -103,7 +112,7 @@ func (f *FnExecutionResponse) Unmarshal(bz []byte) error {
 	return cdc.UnmarshalBinaryLengthPrefixed(bz, f)
 }
 
-func (f *FnExecutionResponse) Compare(remoteResponse *FnExecutionResponse) bool {
+func (f *FnExecutionResponse) CannonicalCompare(remoteResponse *FnExecutionResponse) bool {
 	if f.Error != remoteResponse.Error {
 		return false
 	}
@@ -113,6 +122,18 @@ func (f *FnExecutionResponse) Compare(remoteResponse *FnExecutionResponse) bool 
 	}
 
 	if bytes.Compare(f.Hash, remoteResponse.Hash) != 0 {
+		return false
+	}
+
+	return true
+}
+
+func (f *FnExecutionResponse) Compare(remoteResponse *FnExecutionResponse) bool {
+	if !f.CannonicalCompare(remoteResponse) {
+		return false
+	}
+
+	if bytes.Compare(f.Signature, remoteResponse.Signature) != 0 {
 		return false
 	}
 
@@ -134,6 +155,22 @@ func (f *FnVotePayload) Unmarshal(bz []byte) error {
 
 func (f *FnVotePayload) IsValid() bool {
 	if f.Request == nil || f.Response == nil {
+		return false
+	}
+
+	return true
+}
+
+func (f *FnVotePayload) CannonicalCompare(remotePayload *FnVotePayload) bool {
+	if remotePayload == nil || remotePayload.Request == nil || remotePayload.Response == nil {
+		return false
+	}
+
+	if !f.Request.CannonicalCompare(remotePayload.Request) {
+		return false
+	}
+
+	if !f.Response.CannonicalCompare(remotePayload.Response) {
 		return false
 	}
 
@@ -199,7 +236,7 @@ func (voteSet *FnVoteSet) CannonicalCompare(remoteVoteSet *FnVoteSet) bool {
 		return false
 	}
 
-	if !voteSet.Payload.Compare(remoteVoteSet.Payload) {
+	if !voteSet.Payload.CannonicalCompare(remoteVoteSet.Payload) {
 		return false
 	}
 
