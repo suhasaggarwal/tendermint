@@ -91,8 +91,9 @@ func (f *FnConsensusReactor) areWeValidator() bool {
 // copying.
 //
 // CONTRACT: msgBytes are not nil.
-func (f *FnConsensusReactor) Receive(chID byte, peer p2p.Peer, msgBytes []byte) {
+func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte) {
 	currentState := state.LoadState(f.tmStateDB)
+	var err error
 
 	switch chID {
 	case FnVoteSetChannelID:
@@ -112,19 +113,23 @@ func (f *FnConsensusReactor) Receive(chID byte, peer p2p.Peer, msgBytes []byte) 
 			return
 		}
 
+		hasVoteChanged := false
+
 		// TODO: Check nonce with mainnet before accepting remote vote set
 
 		if f.state.CurrentVoteSets[remoteVoteSet.GetFnID()] == nil {
 			f.state.CurrentVoteSets[remoteVoteSet.GetFnID()] = remoteVoteSet
+			hasVoteChanged = false
 		} else {
-			if err := f.state.CurrentVoteSets[remoteVoteSet.Payload.Request.FnID].Merge(remoteVoteSet); err != nil {
+			if hasVoteChanged, err = f.state.CurrentVoteSets[remoteVoteSet.Payload.Request.FnID].Merge(remoteVoteSet); err != nil {
 				f.Logger.Error("FnConsensusReactor: Unable to merge remote vote set into our own.", "error:", err)
 				return
 			}
 		}
 
 		if f.areWeValidator() {
-			// TODO: Execute it and Add our vote
+			// TODO: Execute Fn and Add our vote
+			hasVoteChanged = true
 
 			if f.state.CurrentVoteSets[remoteVoteSet.GetFnID()].IsMaj23(currentState.Validators) {
 				fn := f.fnRegistry.Get(remoteVoteSet.GetFnID())
@@ -134,12 +139,32 @@ func (f *FnConsensusReactor) Receive(chID byte, peer p2p.Peer, msgBytes []byte) 
 					f.Logger.Error(fmt.Sprintf("FnConsensusReactor: Unable to find FnID: %s inside fnRegistry", remoteVoteSet.GetFnID()))
 				}
 
-				fn.SubmitMultiSignedMessage(nil, nil)
+				// TODO: Change this to proper call
+				fn.SubmitMultiSignedMessage(f.state.CurrentVoteSets[remoteVoteSet.GetFnID()].Payload.Response.Hash, nil)
 				return
 			}
 		}
 
-		// TODO: Propogate voteset to all nodes if voteSet is not identical to the one sent by Peer, otherwise send to all nodes minus peer who sent it
+		marshalledBytes, err := f.state.CurrentVoteSets[remoteVoteSet.GetFnID()].Marshal()
+		if err != nil {
+			f.Logger.Error(fmt.Sprintf("FnConsensusReactor: Unable to marshal currentVoteSet at FnID: %s", remoteVoteSet.GetFnID()))
+			return
+		}
+
+		f.mtx.RLock()
+		for peerID, peer := range f.connectedPeers {
+			if !hasVoteChanged {
+				if peerID == sender.ID() {
+					continue
+				}
+			}
+
+			go func() {
+				// TODO: Handle timeout
+				peer.Send(FnVoteSetChannelID, marshalledBytes)
+			}()
+		}
+		f.mtx.RUnlock()
 
 		break
 	default:
