@@ -1,6 +1,7 @@
 package fnConsensus
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/tendermint/tendermint/p2p"
@@ -123,9 +124,18 @@ func (f *FnConsensusReactor) Receive(chID byte, peer p2p.Peer, msgBytes []byte) 
 		}
 
 		if f.areWeValidator() {
-			// TODO: Add our vote
+			// TODO: Execute it and Add our vote
+
 			if f.state.CurrentVoteSets[remoteVoteSet.GetFnID()].IsMaj23(currentState.Validators) {
-				// TODO: Inform oracle and return
+				fn := f.fnRegistry.Get(remoteVoteSet.GetFnID())
+
+				// Not expected error
+				if fn == nil {
+					f.Logger.Error(fmt.Sprintf("FnConsensusReactor: Unable to find FnID: %s inside fnRegistry", remoteVoteSet.GetFnID()))
+				}
+
+				fn.SubmitMultiSignedMessage(nil, nil)
+				return
 			}
 		}
 
