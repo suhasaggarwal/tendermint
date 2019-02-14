@@ -19,6 +19,17 @@ var ErrFnVoteAlreadyCasted = errors.New("Fn vote is already casted")
 
 var ErrFnVoteMergeDiffPayload = errors.New("merging is not allowed, as votes have different payload")
 
+type fnIndividualExecutionResponse struct {
+	Status          int64
+	Error           string
+	Hash            []byte
+	OracleSignature []byte
+}
+
+func (f *fnIndividualExecutionResponse) Marshal() ([]byte, error) {
+	return cdc.MarshalBinaryLengthPrefixed(f)
+}
+
 type RequestPeerReactorState struct {
 }
 
@@ -85,23 +96,24 @@ func (f *FnExecutionRequest) Unmarshal(bz []byte) error {
 	return cdc.UnmarshalBinaryLengthPrefixed(bz, f)
 }
 
-func (f *FnExecutionRequest) compareInternal(remoteRequest *FnExecutionRequest) bool {
+func (f *FnExecutionRequest) CannonicalCompare(remoteRequest *FnExecutionRequest) bool {
 	return f.FnID != remoteRequest.FnID
 }
 
 func (f *FnExecutionRequest) Compare(remoteRequest *FnExecutionRequest) bool {
-	return f.compareInternal(remoteRequest)
+	return f.CannonicalCompare(remoteRequest)
 }
 
-func (f *FnExecutionRequest) CannonicalCompare(remoteRequest *FnExecutionRequest) bool {
-	return f.compareInternal(remoteRequest)
+func (f *FnExecutionRequest) SignBytes() ([]byte, error) {
+	return f.Marshal()
 }
 
 type FnExecutionResponse struct {
-	Status    int64
-	Error     string
-	Hash      []byte
-	Signature []byte
+	Status int64
+	Error  string
+	Hash   []byte
+	// Indexed by validator index in Current validator set
+	OracleSignatures [][]byte
 }
 
 func (f *FnExecutionResponse) Marshal() ([]byte, error) {
@@ -125,7 +137,22 @@ func (f *FnExecutionResponse) CannonicalCompare(remoteResponse *FnExecutionRespo
 		return false
 	}
 
+	if len(f.OracleSignatures) != len(remoteResponse.OracleSignatures) {
+		return false
+	}
+
 	return true
+}
+
+func (f *FnExecutionResponse) SignBytes(validatorIndex int) ([]byte, error) {
+	individualResponse := &fnIndividualExecutionResponse{
+		Status:          f.Status,
+		Error:           f.Error,
+		Hash:            f.Hash,
+		OracleSignature: f.OracleSignatures[validatorIndex],
+	}
+
+	return individualResponse.Marshal()
 }
 
 func (f *FnExecutionResponse) Compare(remoteResponse *FnExecutionResponse) bool {
@@ -133,8 +160,10 @@ func (f *FnExecutionResponse) Compare(remoteResponse *FnExecutionResponse) bool 
 		return false
 	}
 
-	if bytes.Compare(f.Signature, remoteResponse.Signature) != 0 {
-		return false
+	for i := 0; i < len(f.OracleSignatures); i++ {
+		if bytes.Compare(f.OracleSignatures[i], remoteResponse.OracleSignatures[i]) != 0 {
+			return false
+		}
 	}
 
 	return true
@@ -191,6 +220,28 @@ func (f *FnVotePayload) Compare(remotePayload *FnVotePayload) bool {
 	}
 
 	return true
+}
+
+func (f *FnVotePayload) SignBytes(validatorIndex int) ([]byte, error) {
+	requestSignBytes, err := f.Request.SignBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	responseSignBytes, err := f.Response.SignBytes(validatorIndex)
+	if err != nil {
+		return nil, err
+	}
+
+	sepearator := []byte{0x50}
+
+	signBytes := make([]byte, len(requestSignBytes)+len(responseSignBytes)+len(sepearator))
+
+	copy(signBytes, requestSignBytes)
+	copy(signBytes[len(requestSignBytes):], sepearator)
+	copy(signBytes[len(requestSignBytes)+len(sepearator):], responseSignBytes)
+
+	return signBytes, nil
 }
 
 type FnVoteSet struct {
@@ -252,8 +303,8 @@ func (voteSet *FnVoteSet) CannonicalCompare(remoteVoteSet *FnVoteSet) bool {
 	return true
 }
 
-func (voteSet *FnVoteSet) SignBytes(chainID string, validatorAddress []byte) ([]byte, error) {
-	payloadBytes, err := voteSet.Payload.Marshal()
+func (voteSet *FnVoteSet) SignBytes(chainID string, validatorIndex int, validatorAddress []byte) ([]byte, error) {
+	payloadBytes, err := voteSet.Payload.SignBytes(validatorIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -268,12 +319,12 @@ func (voteSet *FnVoteSet) SignBytes(chainID string, validatorAddress []byte) ([]
 	return signBytes, nil
 }
 
-func (voteSet *FnVoteSet) verifyInternal(signature []byte, chainID string, validatorAddress []byte, pubKey crypto.PubKey) error {
+func (voteSet *FnVoteSet) verifyInternal(signature []byte, chainID string, validatorIndex int, validatorAddress []byte, pubKey crypto.PubKey) error {
 	if !bytes.Equal(pubKey.Address(), validatorAddress) {
 		return ErrFnVoteInvalidValidatorAddress
 	}
 
-	signBytes, err := voteSet.SignBytes(chainID, validatorAddress)
+	signBytes, err := voteSet.SignBytes(chainID, validatorIndex, validatorAddress)
 	if err != nil {
 		return err
 	}
@@ -362,7 +413,8 @@ func (voteSet *FnVoteSet) VerifyValidatorSign(validatorIndex int, chainID string
 		return ErrFnVoteNotPresent
 	}
 
-	return voteSet.verifyInternal(voteSet.ValidatorSignatures[validatorIndex], chainID, voteSet.ValidatorAddresses[validatorIndex], pubKey)
+	return voteSet.verifyInternal(voteSet.ValidatorSignatures[validatorIndex], chainID, validatorIndex,
+		voteSet.ValidatorAddresses[validatorIndex], pubKey)
 }
 
 func (voteSet *FnVoteSet) AddSignature(validatorIndex int, validatorAddress []byte, signature []byte) error {
