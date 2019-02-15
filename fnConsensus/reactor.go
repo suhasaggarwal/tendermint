@@ -5,16 +5,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/p2p"
-	"github.com/tendermint/tendermint/p2p/conn"
 	"github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
 
 	dbm "github.com/tendermint/tendermint/libs/db"
 )
 
-const FnVoteSetChannelID = byte(0x50)
+const FnVoteSetChannel = byte(0x50)
+
+const maxMsgSize = 200 * 1024
 
 type FnConsensusReactor struct {
 	p2p.BaseReactor
@@ -30,21 +30,26 @@ type FnConsensusReactor struct {
 
 	fnProposer *FnProposer
 
-	nodePrivKey crypto.PrivKey
+	privValidator types.PrivValidator
 }
 
-func NewFnConsensusReactor(chainID string, nodePrivKey crypto.PrivKey, fnProposer *FnProposer, fnRegistry *FnRegistry, db dbm.DB, tmStateDB dbm.DB) *FnConsensusReactor {
+func NewFnConsensusReactor(chainID string, privValidator types.PrivValidator, fnProposer *FnProposer, fnRegistry *FnRegistry, db dbm.DB, tmStateDB dbm.DB) *FnConsensusReactor {
 	reactor := &FnConsensusReactor{
 		connectedPeers: make(map[p2p.ID]p2p.Peer),
 		db:             db,
 		chainID:        chainID,
 		tmStateDB:      tmStateDB,
 		fnRegistry:     fnRegistry,
-		nodePrivKey:    nodePrivKey,
+		privValidator:  privValidator,
+		fnProposer:     fnProposer,
 	}
 
 	reactor.BaseReactor = *p2p.NewBaseReactor("FnConsensusReactor", reactor)
 	return reactor
+}
+
+func (f *FnConsensusReactor) String() string {
+	return "FnConsensusReactor"
 }
 
 func (f *FnConsensusReactor) OnStart() error {
@@ -53,19 +58,19 @@ func (f *FnConsensusReactor) OnStart() error {
 		return err
 	}
 	f.state = reactorState
+	go f.proposalReceiverRoutine()
 	return nil
 }
 
 // GetChannels returns the list of channel descriptors.
-func (f *FnConsensusReactor) GetChannels() []*conn.ChannelDescriptor {
+func (f *FnConsensusReactor) GetChannels() []*p2p.ChannelDescriptor {
 	// Priorities are deliberately set to low, to prevent interfering with core TM
-	return []*conn.ChannelDescriptor{
+	return []*p2p.ChannelDescriptor{
 		{
-			ID:                  FnVoteSetChannelID,
+			ID:                  FnVoteSetChannel,
 			Priority:            25,
 			SendQueueCapacity:   100,
-			RecvBufferCapacity:  100,
-			RecvMessageCapacity: 10,
+			RecvMessageCapacity: maxMsgSize,
 		},
 	}
 }
@@ -86,7 +91,7 @@ func (f *FnConsensusReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
 }
 
 func (f *FnConsensusReactor) areWeValidator(currentValidatorSet *types.ValidatorSet) bool {
-	validatorIndex, _ := currentValidatorSet.GetByAddress(f.nodePrivKey.PubKey().Address())
+	validatorIndex, _ := currentValidatorSet.GetByAddress(f.privValidator.GetPubKey().Address())
 	return validatorIndex != -1
 }
 
@@ -97,7 +102,7 @@ OUTER_LOOP:
 		case fnID := <-f.fnProposer.ProposeChannel():
 			currentState := state.LoadState(f.tmStateDB)
 
-			validatorIndex, _ := currentState.Validators.GetByAddress(f.nodePrivKey.PubKey().Address())
+			validatorIndex, _ := currentState.Validators.GetByAddress(f.privValidator.GetAddress())
 			if validatorIndex == -1 {
 				f.Logger.Error("FnConsensusReactor: unable to propose new Fn, as we are no longer validator")
 				return
@@ -123,6 +128,13 @@ OUTER_LOOP:
 				return
 			}
 
+			if lastSeenNonce, ok := f.state.LastSeenNonces[fnID]; ok {
+				if nonce <= lastSeenNonce {
+					f.Logger.Error("FnConsensusError: nonce is already seen")
+					return
+				}
+			}
+
 			individualExecution := &FnIndividualExecutionResponse{
 				Error:           "",
 				Hash:            hash,
@@ -134,9 +146,15 @@ OUTER_LOOP:
 
 			votesetPayload := NewFnVotePayload(executionRequest, executionResponse)
 
-			voteSet, err := NewVoteSet(f.chainID, nonce, 1*time.Minute, validatorIndex, votesetPayload, f.nodePrivKey, currentState.Validators)
+			voteSet, err := NewVoteSet(f.chainID, nonce, 1*time.Minute, validatorIndex, votesetPayload, f.privValidator, currentState.Validators)
 			if err != nil {
 				f.Logger.Error("FnConsensusReactor: unable to create new voteset", "fnID", fnID, "error", err)
+				return
+			}
+
+			// It seems we are the only validator, so return the signature and close the case.
+			if voteSet.IsMaj23(currentState.Validators) {
+				fn.SubmitMultiSignedMessage(voteSet.Payload.Response.Hash, voteSet.Payload.Response.OracleSignatures)
 				return
 			}
 
@@ -145,6 +163,7 @@ OUTER_LOOP:
 			}
 
 			f.state.CurrentVoteSets[fnID] = voteSet
+			f.state.LastSeenNonces[fnID] = nonce
 
 			if err := SaveReactorState(f.db, f.state, true); err != nil {
 				f.Logger.Error("FnConsensusReactor: unable to save state", "fnID", fnID, "error", err)
@@ -161,14 +180,14 @@ OUTER_LOOP:
 			for _, peer := range f.connectedPeers {
 				go func() {
 					// TODO: Handle timeout
-					peer.Send(FnVoteSetChannelID, marshalledBytes)
+					peer.Send(FnVoteSetChannel, marshalledBytes)
 				}()
 			}
 			f.peerMapMtx.RUnlock()
 
 			break
 		case <-f.Quit():
-			f.Logger.Info("Quitting")
+			f.Logger.Info("received signal from quitCh, Quitting...")
 			break OUTER_LOOP
 		}
 	}
@@ -185,11 +204,18 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 	var err error
 
 	switch chID {
-	case FnVoteSetChannelID:
+	case FnVoteSetChannel:
 		remoteVoteSet := &FnVoteSet{}
 		if err := remoteVoteSet.Unmarshal(msgBytes); err != nil {
 			f.Logger.Error("FnConsensusReactor: Invalid Data passed, ignoring...")
 			return
+		}
+
+		if lastSeenNonce, ok := f.state.LastSeenNonces[remoteVoteSet.GetFnID()]; ok {
+			if remoteVoteSet.Nonce < lastSeenNonce {
+				f.Logger.Error("FnConsensusError: nonce is already processed")
+				return
+			}
 		}
 
 		if !remoteVoteSet.IsValid(f.chainID, currentState.Validators, f.fnRegistry) {
@@ -202,16 +228,16 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 			return
 		}
 
-		hasVoteChanged := false
+		didWeContribute := false
 		fnID := remoteVoteSet.GetFnID()
 
 		// TODO: Check nonce with mainnet before accepting remote vote set
 
 		if f.state.CurrentVoteSets[fnID] == nil {
 			f.state.CurrentVoteSets[fnID] = remoteVoteSet
-			hasVoteChanged = false
+			didWeContribute = false
 		} else {
-			if hasVoteChanged, err = f.state.CurrentVoteSets[fnID].Merge(remoteVoteSet); err != nil {
+			if didWeContribute, err = f.state.CurrentVoteSets[fnID].Merge(remoteVoteSet); err != nil {
 				f.Logger.Error("FnConsensusReactor: Unable to merge remote vote set into our own.", "error:", err)
 				return
 			}
@@ -219,7 +245,7 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 
 		if f.areWeValidator(currentState.Validators) {
 
-			validatorIndex, _ := currentState.Validators.GetByAddress(f.nodePrivKey.PubKey().Address())
+			validatorIndex, _ := currentState.Validators.GetByAddress(f.privValidator.GetPubKey().Address())
 
 			fn := f.fnRegistry.Get(fnID)
 
@@ -234,13 +260,13 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 				Error:           "",
 				Hash:            hash,
 				OracleSignature: signature,
-			}, validatorIndex, f.nodePrivKey)
+			}, currentState.Validators, validatorIndex, f.privValidator)
 			if err != nil {
 				f.Logger.Error("FnConsensusError: unable to add vote to current voteset, ignoring...")
 				return
 			}
 
-			hasVoteChanged = true
+			didWeContribute = true
 
 			if f.state.CurrentVoteSets[fnID].IsMaj23(currentState.Validators) {
 				fn.SubmitMultiSignedMessage(f.state.CurrentVoteSets[fnID].Payload.Response.Hash, f.state.CurrentVoteSets[fnID].Payload.Response.OracleSignatures)
@@ -248,11 +274,10 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 			}
 		}
 
-		if hasVoteChanged {
-			if err := SaveReactorState(f.db, f.state, true); err != nil {
-				f.Logger.Error("FnConsensusReactor: unable to save state", "fnID", fnID, "error", err)
-				return
-			}
+		f.state.LastSeenNonces[fnID] = remoteVoteSet.Nonce
+		if err := SaveReactorState(f.db, f.state, true); err != nil {
+			f.Logger.Error("FnConsensusReactor: unable to save state", "fnID", fnID, "error", err)
+			return
 		}
 
 		marshalledBytes, err := f.state.CurrentVoteSets[fnID].Marshal()
@@ -263,7 +288,9 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 
 		f.peerMapMtx.RLock()
 		for peerID, peer := range f.connectedPeers {
-			if !hasVoteChanged {
+
+			// If we didnt contribute to remote vote, no need to pass it to sender
+			if !didWeContribute {
 				if peerID == sender.ID() {
 					continue
 				}
@@ -271,7 +298,7 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 
 			go func() {
 				// TODO: Handle timeout
-				peer.Send(FnVoteSetChannelID, marshalledBytes)
+				peer.Send(FnVoteSetChannel, marshalledBytes)
 			}()
 		}
 		f.peerMapMtx.RUnlock()
