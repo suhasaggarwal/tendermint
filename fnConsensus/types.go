@@ -119,7 +119,7 @@ func (f *FnExecutionRequest) SignBytes() ([]byte, error) {
 	return f.Marshal()
 }
 
-func NewFnExecutionRequest(fnID string, registry *FnRegistry) (*FnExecutionRequest, error) {
+func NewFnExecutionRequest(fnID string, registry FnRegistry) (*FnExecutionRequest, error) {
 	if registry.Get(fnID) == nil {
 		return nil, fmt.Errorf("fnConsensusReactor: unable to create FnExecutionRequest as id is invalid")
 	}
@@ -479,7 +479,7 @@ func (voteSet *FnVoteSet) IsMaj23(currentValidatorSet *types.ValidatorSet) bool 
 }
 
 // Should be the first function to be invoked on vote set received from Peer
-func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.ValidatorSet, registry *FnRegistry) bool {
+func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.ValidatorSet, registry FnRegistry) bool {
 	isValid := true
 	numValidators := voteSet.VoteBitArray.Size()
 

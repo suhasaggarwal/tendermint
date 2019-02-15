@@ -26,14 +26,14 @@ type FnConsensusReactor struct {
 	tmStateDB      dbm.DB
 	chainID        string
 
-	fnRegistry *FnRegistry
+	fnRegistry FnRegistry
 
 	fnProposer *FnProposer
 
 	privValidator types.PrivValidator
 }
 
-func NewFnConsensusReactor(chainID string, privValidator types.PrivValidator, fnProposer *FnProposer, fnRegistry *FnRegistry, db dbm.DB, tmStateDB dbm.DB) *FnConsensusReactor {
+func NewFnConsensusReactor(chainID string, privValidator types.PrivValidator, fnProposer *FnProposer, fnRegistry FnRegistry, db dbm.DB, tmStateDB dbm.DB) *FnConsensusReactor {
 	reactor := &FnConsensusReactor{
 		connectedPeers: make(map[p2p.ID]p2p.Peer),
 		db:             db,

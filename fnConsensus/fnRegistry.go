@@ -13,25 +13,30 @@ type Fn interface {
 	GetMessageAndSignature() ([]byte, []byte, error)
 }
 
+type FnRegistry interface {
+	Get(fnID string) Fn
+	Set(fnID string, fnObj Fn) error
+}
+
 // Transient registry, need to rebuild upon restart
-type FnRegistry struct {
+type InMemoryFnRegistry struct {
 	mtx   sync.RWMutex
 	fnMap map[string]Fn
 }
 
-func NewFnRegistry() *FnRegistry {
-	return &FnRegistry{
+func NewInMemoryFnRegistry() *InMemoryFnRegistry {
+	return &InMemoryFnRegistry{
 		fnMap: make(map[string]Fn),
 	}
 }
 
-func (f *FnRegistry) Get(fnID string) Fn {
+func (f *InMemoryFnRegistry) Get(fnID string) Fn {
 	f.mtx.RLock()
 	defer f.mtx.RUnlock()
 	return f.fnMap[fnID]
 }
 
-func (f *FnRegistry) Set(fnID string, fnObj Fn) error {
+func (f *InMemoryFnRegistry) Set(fnID string, fnObj Fn) error {
 	f.mtx.Lock()
 	defer f.mtx.Unlock()
 
