@@ -106,16 +106,15 @@ OUTER_LOOP:
 			areWeValidator, validatorIndex := f.areWeValidator(currentState.Validators)
 			if !areWeValidator {
 				f.Logger.Error("FnConsensusReactor: unable to propose new Fn, as we are no longer validator")
-				return
-			}
-
-			executionRequest, err := NewFnExecutionRequest(fnID, f.fnRegistry)
-			if err != nil {
-				f.Logger.Error("FnConsensusReactor: unable to create Fn execution request as FnID is invalid", "fnID", fnID)
 				break
 			}
 
 			fn := f.fnRegistry.Get(fnID)
+
+			if fn == nil {
+				f.Logger.Error("FnConsensusError: FnID passed is invalid")
+				break
+			}
 
 			hash, signature, err := fn.GetMessageAndSignature()
 			if err != nil {
@@ -136,14 +135,18 @@ OUTER_LOOP:
 				}
 			}
 
-			individualExecution := &FnIndividualExecutionResponse{
+			executionRequest, err := NewFnExecutionRequest(fnID, f.fnRegistry)
+			if err != nil {
+				f.Logger.Error("FnConsensusReactor: unable to create Fn execution request as FnID is invalid", "fnID", fnID)
+				break
+			}
+
+			executionResponse := NewFnExecutionResponse(&FnIndividualExecutionResponse{
 				Error:           "",
 				Hash:            hash,
 				OracleSignature: signature,
 				Status:          0,
-			}
-
-			executionResponse := NewFnExecutionResponse(individualExecution, validatorIndex, currentState.Validators)
+			}, validatorIndex, currentState.Validators)
 
 			votesetPayload := NewFnVotePayload(executionRequest, executionResponse)
 
@@ -160,7 +163,7 @@ OUTER_LOOP:
 			}
 
 			if f.state.CurrentVoteSets[fnID] != nil {
-				f.Logger.Error("[Warn] FnConsensusReactor: we are overwriting another voteset", "fnID", fnID)
+				f.Logger.Error("[Warn] FnConsensusReactor: we are overwriting previous voteset", "fnID", fnID)
 			}
 
 			f.state.CurrentVoteSets[fnID] = voteSet
@@ -215,7 +218,7 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 
 		if lastSeenNonce, ok := f.state.LastSeenNonces[remoteVoteSet.GetFnID()]; ok {
 			if remoteVoteSet.Nonce < lastSeenNonce {
-				f.Logger.Error("FnConsensusError: nonce is already processed")
+				f.Logger.Error("FnConsensusReactor: nonce is already processed")
 				return
 			}
 		}
@@ -267,7 +270,9 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 			didWeContribute = true
 		}
 
+		// Update last seen nonces
 		f.state.LastSeenNonces[fnID] = remoteVoteSet.Nonce
+
 		if err := SaveReactorState(f.db, f.state, true); err != nil {
 			f.Logger.Error("FnConsensusReactor: unable to save state", "fnID", fnID, "error", err)
 			return
