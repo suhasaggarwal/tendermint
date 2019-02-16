@@ -10,6 +10,8 @@ import (
 	"github.com/tendermint/tendermint/types"
 
 	dbm "github.com/tendermint/tendermint/libs/db"
+
+	"crypto/sha512"
 )
 
 const FnVoteSetChannel = byte(0x50)
@@ -98,6 +100,15 @@ func (f *FnConsensusReactor) areWeValidator(currentValidatorSet *types.Validator
 	return validatorIndex != -1, validatorIndex
 }
 
+func (f *FnConsensusReactor) calculateMessageHash(message []byte) ([]byte, error) {
+	hash := sha512.New()
+	_, err := hash.Write(message)
+	if err != nil {
+		return nil, err
+	}
+	return hash.Sum(nil), nil
+}
+
 func (f *FnConsensusReactor) proposalReceiverRoutine() {
 OUTER_LOOP:
 	for {
@@ -118,10 +129,21 @@ OUTER_LOOP:
 				break
 			}
 
-			hash, signature, err := fn.GetMessageAndSignature()
+			message, signature, err := fn.GetMessageAndSignature()
 			if err != nil {
 				f.Logger.Error("FnConsensusReactor: received error while executing fn.GetMessageAndSignature", "fnID", fnID)
 				break
+			}
+
+			hash, err := f.calculateMessageHash(message)
+			if err != nil {
+				f.Logger.Error("FnConsensusReactor: unable to calculate message hash", "fnID", fnID, "error", err)
+				return
+			}
+
+			if err = fn.MapMessage(hash, message); err != nil {
+				f.Logger.Error("FnConsensusReactor: received error while executing fn.MapMessage", "fnID", fnID, "error", err)
+				return
 			}
 
 			nonce, err := fn.GetNonce()
@@ -262,9 +284,20 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 		}
 
 		if areWeValidator {
-			hash, signature, err := fn.GetMessageAndSignature()
+			message, signature, err := fn.GetMessageAndSignature()
 			if err != nil {
 				f.Logger.Error("FnConsensusReactor: fn.GetMessageAndSignature returned an error, ignoring..")
+				return
+			}
+
+			hash, err := f.calculateMessageHash(message)
+			if err != nil {
+				f.Logger.Error("FnConsensusReactor: unable to calculate message hash", "fnID", fnID, "error", err)
+				return
+			}
+
+			if err = fn.MapMessage(hash, message); err != nil {
+				f.Logger.Error("FnConsensusReactor: received error while executing fn.MapMessage", "fnID", fnID, "error", err)
 				return
 			}
 

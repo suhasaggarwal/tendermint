@@ -11,6 +11,7 @@ type Fn interface {
 	GetNonce() (int64, error)
 	SubmitMultiSignedMessage(message []byte, signatures [][]byte)
 	GetMessageAndSignature() ([]byte, []byte, error)
+	MapMessage([]byte, []byte) error
 }
 
 type FnRegistry interface {
