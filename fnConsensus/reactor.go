@@ -32,6 +32,8 @@ type FnConsensusReactor struct {
 	privValidator types.PrivValidator
 
 	peerMapMtx sync.RWMutex
+
+	stateMtx sync.Mutex
 }
 
 func NewFnConsensusReactor(chainID string, privValidator types.PrivValidator, fnProposer FnProposer, fnRegistry FnRegistry, db dbm.DB, tmStateDB dbm.DB) *FnConsensusReactor {
@@ -128,13 +130,6 @@ OUTER_LOOP:
 				break
 			}
 
-			if lastSeenNonce, ok := f.state.LastSeenNonces[fnID]; ok {
-				if nonce <= lastSeenNonce {
-					f.Logger.Error("FnConsensusError: nonce is already seen")
-					break
-				}
-			}
-
 			executionRequest, err := NewFnExecutionRequest(fnID, f.fnRegistry)
 			if err != nil {
 				f.Logger.Error("FnConsensusReactor: unable to create Fn execution request as FnID is invalid", "fnID", fnID)
@@ -156,14 +151,25 @@ OUTER_LOOP:
 				break
 			}
 
-			// It seems we are the only validator, so return the signature and close the case.
-			if voteSet.IsMaj23(currentState.Validators) {
-				fn.SubmitMultiSignedMessage(voteSet.Payload.Response.Hash, voteSet.Payload.Response.OracleSignatures)
-				break
+			f.stateMtx.Lock()
+
+			if lastSeenNonce, ok := f.state.LastSeenNonces[fnID]; ok {
+				if nonce <= lastSeenNonce {
+					f.Logger.Error("FnConsensusError: nonce is already seen")
+					f.stateMtx.Unlock()
+					break
+				}
 			}
 
 			if f.state.CurrentVoteSets[fnID] != nil {
 				f.Logger.Error("[Warn] FnConsensusReactor: we are overwriting previous voteset", "fnID", fnID)
+			}
+
+			// It seems we are the only validator, so return the signature and close the case.
+			if voteSet.IsMaj23(currentState.Validators) {
+				fn.SubmitMultiSignedMessage(voteSet.Payload.Response.Hash, voteSet.Payload.Response.OracleSignatures)
+				f.stateMtx.Unlock()
+				break
 			}
 
 			f.state.CurrentVoteSets[fnID] = voteSet
@@ -171,8 +177,11 @@ OUTER_LOOP:
 
 			if err := SaveReactorState(f.db, f.state, true); err != nil {
 				f.Logger.Error("FnConsensusReactor: unable to save state", "fnID", fnID, "error", err)
+				f.stateMtx.Unlock()
 				break
 			}
+
+			f.stateMtx.Unlock()
 
 			marshalledBytes, err := voteSet.Marshal()
 			if err != nil {
@@ -207,6 +216,9 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 	currentState := state.LoadState(f.tmStateDB)
 	areWeValidator, validatorIndex := f.areWeValidator(currentState.Validators)
 	var err error
+
+	f.stateMtx.Lock()
+	defer f.stateMtx.Unlock()
 
 	switch chID {
 	case FnVoteSetChannel:
