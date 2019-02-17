@@ -66,6 +66,7 @@ func (p *ReactorState) Unmarshal(bz []byte) error {
 	}
 
 	p.CurrentVoteSets = make(map[string]*FnVoteSet)
+	p.LastSeenNonces = make(map[string]int64)
 
 	for _, voteSet := range voteSetMarshallable.CurrentVoteSets {
 		p.CurrentVoteSets[voteSet.Payload.Request.FnID] = voteSet
