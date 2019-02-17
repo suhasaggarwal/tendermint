@@ -267,7 +267,7 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 			return
 		}
 
-		didWeContribute := false
+		var didWeContribute, hasOurVoteSetChanged bool
 		fnID := remoteVoteSet.GetFnID()
 		fn := f.fnRegistry.Get(fnID)
 
@@ -275,12 +275,15 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 
 		if f.state.CurrentVoteSets[fnID] == nil {
 			f.state.CurrentVoteSets[fnID] = remoteVoteSet
+			// We didnt contribute but, our voteset changed
 			didWeContribute = false
+			hasOurVoteSetChanged = true
 		} else {
 			if didWeContribute, err = f.state.CurrentVoteSets[fnID].Merge(remoteVoteSet); err != nil {
 				f.Logger.Error("FnConsensusReactor: Unable to merge remote vote set into our own.", "error:", err)
 				return
 			}
+			hasOurVoteSetChanged = didWeContribute
 		}
 
 		if areWeValidator {
@@ -313,6 +316,7 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 			}
 
 			didWeContribute = true
+			hasOurVoteSetChanged = true
 		}
 
 		// Update last seen nonces
@@ -324,10 +328,18 @@ func (f *FnConsensusReactor) Receive(chID byte, sender p2p.Peer, msgBytes []byte
 		}
 
 		if areWeValidator {
+			// If we achieved Majority no need to propgate voteset to other peers
 			if f.state.CurrentVoteSets[fnID].IsMaj23(currentState.Validators) {
 				fn.SubmitMultiSignedMessage(f.state.CurrentVoteSets[fnID].Payload.Response.Hash, f.state.CurrentVoteSets[fnID].Payload.Response.OracleSignatures)
 				return
 			}
+		}
+
+		// If our vote havent't changed, no need to annonce it, as
+		// we have already annonunced it last time it changed
+		// TODO: If it is not maj23 vote, we will keep circulating it on pre-defined interval
+		if !hasOurVoteSetChanged {
+			return
 		}
 
 		marshalledBytes, err := f.state.CurrentVoteSets[fnID].Marshal()
