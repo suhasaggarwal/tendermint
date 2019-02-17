@@ -2,6 +2,7 @@ package fnConsensus
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 const FnVoteSetChannel = byte(0x50)
 
 const maxMsgSize = 500 * 1024
+const ProposeDuration = 20 * time.Second
 
 type FnConsensusReactor struct {
 	p2p.BaseReactor
@@ -29,8 +31,6 @@ type FnConsensusReactor struct {
 
 	fnRegistry FnRegistry
 
-	fnProposer FnProposer
-
 	privValidator types.PrivValidator
 
 	peerMapMtx sync.RWMutex
@@ -38,7 +38,7 @@ type FnConsensusReactor struct {
 	stateMtx sync.Mutex
 }
 
-func NewFnConsensusReactor(chainID string, privValidator types.PrivValidator, fnProposer FnProposer, fnRegistry FnRegistry, db dbm.DB, tmStateDB dbm.DB) *FnConsensusReactor {
+func NewFnConsensusReactor(chainID string, privValidator types.PrivValidator, fnRegistry FnRegistry, db dbm.DB, tmStateDB dbm.DB) *FnConsensusReactor {
 	reactor := &FnConsensusReactor{
 		connectedPeers: make(map[p2p.ID]p2p.Peer),
 		db:             db,
@@ -46,7 +46,6 @@ func NewFnConsensusReactor(chainID string, privValidator types.PrivValidator, fn
 		tmStateDB:      tmStateDB,
 		fnRegistry:     fnRegistry,
 		privValidator:  privValidator,
-		fnProposer:     fnProposer,
 	}
 
 	reactor.BaseReactor = *p2p.NewBaseReactor("FnConsensusReactor", reactor)
@@ -63,7 +62,7 @@ func (f *FnConsensusReactor) OnStart() error {
 		return err
 	}
 	f.state = reactorState
-	go f.proposalReceiverRoutine()
+	go f.proposalRoutine()
 	return nil
 }
 
@@ -109,123 +108,141 @@ func (f *FnConsensusReactor) calculateMessageHash(message []byte) ([]byte, error
 	return hash.Sum(nil), nil
 }
 
-func (f *FnConsensusReactor) proposalReceiverRoutine() {
+func (f *FnConsensusReactor) proposalRoutine() {
+	ticker := time.NewTicker(20 * time.Second)
+
 OUTER_LOOP:
 	for {
 		select {
-		case fnID := <-f.fnProposer.ProposeChannel():
+		case <-ticker.C:
 			currentState := state.LoadState(f.tmStateDB)
 
-			areWeValidator, validatorIndex := f.areWeValidator(currentState.Validators)
+			areWeValidator, ownValidatorIndex := f.areWeValidator(currentState.Validators)
 			if !areWeValidator {
 				f.Logger.Error("FnConsensusReactor: unable to propose new Fn, as we are no longer validator")
 				break
 			}
 
-			fn := f.fnRegistry.Get(fnID)
-
-			if fn == nil {
-				f.Logger.Error("FnConsensusError: FnID passed is invalid")
+			proposer := currentState.Validators.GetProposer()
+			if proposer == nil {
+				f.Logger.Error("FnConsensusReactor: unable to get proposer from current validators")
 				break
 			}
 
-			message, signature, err := fn.GetMessageAndSignature()
-			if err != nil {
-				f.Logger.Error("FnConsensusReactor: received error while executing fn.GetMessageAndSignature", "fnID", fnID)
+			proposerIndex, _ := currentState.Validators.GetByAddress(proposer.Address)
+
+			if proposerIndex != ownValidatorIndex {
 				break
 			}
 
-			hash, err := f.calculateMessageHash(message)
-			if err != nil {
-				f.Logger.Error("FnConsensusReactor: unable to calculate message hash", "fnID", fnID, "error", err)
-				return
-			}
+			fnIDs := f.fnRegistry.GetAll()
+			sort.Strings(fnIDs)
 
-			if err = fn.MapMessage(hash, message); err != nil {
-				f.Logger.Error("FnConsensusReactor: received error while executing fn.MapMessage", "fnID", fnID, "error", err)
-				return
-			}
-
-			nonce, err := fn.GetNonce()
-			if err != nil {
-				f.Logger.Error("FnConsensusReactor: unable to get nonce from fn.GetNonce method", "fnID", fnID)
-				break
-			}
-
-			executionRequest, err := NewFnExecutionRequest(fnID, f.fnRegistry)
-			if err != nil {
-				f.Logger.Error("FnConsensusReactor: unable to create Fn execution request as FnID is invalid", "fnID", fnID)
-				break
-			}
-
-			executionResponse := NewFnExecutionResponse(&FnIndividualExecutionResponse{
-				Error:           "",
-				Hash:            hash,
-				OracleSignature: signature,
-				Status:          0,
-			}, validatorIndex, currentState.Validators)
-
-			votesetPayload := NewFnVotePayload(executionRequest, executionResponse)
-
-			voteSet, err := NewVoteSet(f.chainID, nonce, 1*time.Minute, validatorIndex, votesetPayload, f.privValidator, currentState.Validators)
-			if err != nil {
-				f.Logger.Error("FnConsensusReactor: unable to create new voteset", "fnID", fnID, "error", err)
-				break
-			}
-
-			f.stateMtx.Lock()
-
-			if lastSeenNonce, ok := f.state.LastSeenNonces[fnID]; ok {
-				if nonce <= lastSeenNonce {
-					f.Logger.Error("FnConsensusError: nonce is already seen")
-					f.stateMtx.Unlock()
-					break
+			for _, fnID := range fnIDs {
+				fn := f.fnRegistry.Get(fnID)
+				nonce, err := fn.GetNonce()
+				if err != nil {
+					f.Logger.Error("FnConsensusReactor: error while trying to get nonce for fn", "FnID", fnID, "error", err)
+					continue
 				}
+
+				f.propose(fnID, fn, nonce, currentState, ownValidatorIndex)
 			}
-
-			if f.state.CurrentVoteSets[fnID] != nil {
-				f.Logger.Error("[Warn] FnConsensusReactor: we are overwriting previous voteset", "fnID", fnID)
-			}
-
-			// It seems we are the only validator, so return the signature and close the case.
-			if voteSet.IsMaj23(currentState.Validators) {
-				fn.SubmitMultiSignedMessage(voteSet.Payload.Response.Hash, voteSet.Payload.Response.OracleSignatures)
-				f.stateMtx.Unlock()
-				break
-			}
-
-			f.state.CurrentVoteSets[fnID] = voteSet
-			f.state.LastSeenNonces[fnID] = nonce
-
-			if err := SaveReactorState(f.db, f.state, true); err != nil {
-				f.Logger.Error("FnConsensusReactor: unable to save state", "fnID", fnID, "error", err)
-				f.stateMtx.Unlock()
-				break
-			}
-
-			f.stateMtx.Unlock()
-
-			marshalledBytes, err := voteSet.Marshal()
-			if err != nil {
-				f.Logger.Error(fmt.Sprintf("FnConsensusReactor: Unable to marshal currentVoteSet at FnID: %s", fnID))
-				break
-			}
-
-			f.peerMapMtx.RLock()
-			for _, peer := range f.connectedPeers {
-				go func() {
-					// TODO: Handle timeout
-					peer.Send(FnVoteSetChannel, marshalledBytes)
-				}()
-			}
-			f.peerMapMtx.RUnlock()
-
 			break
 		case <-f.Quit():
-			f.Logger.Info("received signal from quitCh, Quitting...")
+			f.Logger.Info("FnConsensusReactor: shutting down the loop because we are shutting down")
+			ticker.Stop()
 			break OUTER_LOOP
 		}
 	}
+}
+
+func (f *FnConsensusReactor) propose(fnID string, fn Fn, nonce int64, currentState state.State, validatorIndex int) {
+	message, signature, err := fn.GetMessageAndSignature()
+	if err != nil {
+		f.Logger.Error("FnConsensusReactor: received error while executing fn.GetMessageAndSignature", "fnID", fnID)
+		return
+	}
+
+	hash, err := f.calculateMessageHash(message)
+	if err != nil {
+		f.Logger.Error("FnConsensusReactor: unable to calculate message hash", "fnID", fnID, "error", err)
+		return
+	}
+
+	if err = fn.MapMessage(hash, message); err != nil {
+		f.Logger.Error("FnConsensusReactor: received error while executing fn.MapMessage", "fnID", fnID, "error", err)
+		return
+	}
+
+	executionRequest, err := NewFnExecutionRequest(fnID, f.fnRegistry)
+	if err != nil {
+		f.Logger.Error("FnConsensusReactor: unable to create Fn execution request as FnID is invalid", "fnID", fnID)
+		return
+	}
+
+	executionResponse := NewFnExecutionResponse(&FnIndividualExecutionResponse{
+		Error:           "",
+		Hash:            hash,
+		OracleSignature: signature,
+		Status:          0,
+	}, validatorIndex, currentState.Validators)
+
+	votesetPayload := NewFnVotePayload(executionRequest, executionResponse)
+
+	voteSet, err := NewVoteSet(f.chainID, nonce, 1*time.Minute, validatorIndex, votesetPayload, f.privValidator, currentState.Validators)
+	if err != nil {
+		f.Logger.Error("FnConsensusReactor: unable to create new voteset", "fnID", fnID, "error", err)
+		return
+	}
+
+	f.stateMtx.Lock()
+
+	if lastSeenNonce, ok := f.state.LastSeenNonces[fnID]; ok {
+		if nonce <= lastSeenNonce {
+			f.Logger.Error("FnConsensusError: nonce is already seen")
+			f.stateMtx.Unlock()
+			return
+		}
+	}
+
+	if f.state.CurrentVoteSets[fnID] != nil {
+		f.Logger.Error("[Warn] FnConsensusReactor: we are overwriting previous voteset", "fnID", fnID)
+	}
+
+	// It seems we are the only validator, so return the signature and close the case.
+	if voteSet.IsMaj23(currentState.Validators) {
+		fn.SubmitMultiSignedMessage(voteSet.Payload.Response.Hash, voteSet.Payload.Response.OracleSignatures)
+		f.stateMtx.Unlock()
+		return
+	}
+
+	f.state.CurrentVoteSets[fnID] = voteSet
+	f.state.LastSeenNonces[fnID] = nonce
+
+	if err := SaveReactorState(f.db, f.state, true); err != nil {
+		f.Logger.Error("FnConsensusReactor: unable to save state", "fnID", fnID, "error", err)
+		f.stateMtx.Unlock()
+		return
+	}
+
+	f.stateMtx.Unlock()
+
+	marshalledBytes, err := voteSet.Marshal()
+	if err != nil {
+		f.Logger.Error(fmt.Sprintf("FnConsensusReactor: Unable to marshal currentVoteSet at FnID: %s", fnID))
+		return
+	}
+
+	f.peerMapMtx.RLock()
+	for _, peer := range f.connectedPeers {
+		go func() {
+			// TODO: Handle timeout
+			peer.Send(FnVoteSetChannel, marshalledBytes)
+		}()
+	}
+	f.peerMapMtx.RUnlock()
+
 }
 
 func (f *FnConsensusReactor) handleVoteSetChannelMessage(sender p2p.Peer, msgBytes []byte) {

@@ -95,7 +95,6 @@ func DefaultNewNode(config *cfg.Config, logger log.Logger) (*Node, error) {
 		DefaultDBProvider,
 		DefaultMetricsProvider(config.Instrumentation),
 		logger,
-		fnConsensus.NewSimpleFnProposer(10),
 		fnConsensus.NewInMemoryFnRegistry(),
 	)
 }
@@ -160,7 +159,6 @@ func NewNode(config *cfg.Config,
 	dbProvider DBProvider,
 	metricsProvider MetricsProvider,
 	logger log.Logger,
-	fnProposer fnConsensus.FnProposer,
 	fnRegistry fnConsensus.FnRegistry) (*Node, error) {
 
 	// Get BlockStore
@@ -437,7 +435,7 @@ func NewNode(config *cfg.Config,
 	)
 	sw.SetLogger(p2pLogger)
 
-	fnConsensusReactor := fnConsensus.NewFnConsensusReactor(config.ChainID(), privValidator, fnProposer, fnRegistry, fnConsensusDB, stateDB)
+	fnConsensusReactor := fnConsensus.NewFnConsensusReactor(config.ChainID(), privValidator, fnRegistry, fnConsensusDB, stateDB)
 	fnConsensusReactor.SetLogger(logger.With("module", "FnConsensus"))
 
 	sw.AddReactor("MEMPOOL", mempoolReactor)

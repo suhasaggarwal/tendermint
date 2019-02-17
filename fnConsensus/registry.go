@@ -17,6 +17,7 @@ type Fn interface {
 type FnRegistry interface {
 	Get(fnID string) Fn
 	Set(fnID string, fnObj Fn) error
+	GetAll() []string
 }
 
 // Transient registry, need to rebuild upon restart
@@ -29,6 +30,18 @@ func NewInMemoryFnRegistry() *InMemoryFnRegistry {
 	return &InMemoryFnRegistry{
 		fnMap: make(map[string]Fn),
 	}
+}
+
+func (f *InMemoryFnRegistry) GetAll() []string {
+	fnIDs := make([]string, len(f.fnMap))
+
+	i := 0
+	for fnID := range f.fnMap {
+		fnIDs[i] = fnID
+		i++
+	}
+
+	return fnIDs
 }
 
 func (f *InMemoryFnRegistry) Get(fnID string) Fn {
