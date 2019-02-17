@@ -95,6 +95,8 @@ func DefaultNewNode(config *cfg.Config, logger log.Logger) (*Node, error) {
 		DefaultDBProvider,
 		DefaultMetricsProvider(config.Instrumentation),
 		logger,
+		fnConsensus.NewSimpleFnProposer(10),
+		fnConsensus.NewInMemoryFnRegistry(),
 	)
 }
 
@@ -157,7 +159,9 @@ func NewNode(config *cfg.Config,
 	genesisDocProvider GenesisDocProvider,
 	dbProvider DBProvider,
 	metricsProvider MetricsProvider,
-	logger log.Logger) (*Node, error) {
+	logger log.Logger,
+	fnProposer fnConsensus.FnProposer,
+	fnRegistry fnConsensus.FnRegistry) (*Node, error) {
 
 	// Get BlockStore
 	blockStoreDB, err := dbProvider(&DBContext{"blockstore", config})
@@ -168,6 +172,11 @@ func NewNode(config *cfg.Config,
 
 	// Get State
 	stateDB, err := dbProvider(&DBContext{"state", config})
+	if err != nil {
+		return nil, err
+	}
+
+	fnConsensusDB, err := dbProvider(&DBContext{"fnConsensus", config})
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +437,8 @@ func NewNode(config *cfg.Config,
 	)
 	sw.SetLogger(p2pLogger)
 
-	fnConsensusReactor := fnConsensus.NewFnConsensusReactor()
+	fnConsensusReactor := fnConsensus.NewFnConsensusReactor(config.ChainID(), privValidator, fnProposer, fnRegistry, fnConsensusDB, stateDB)
+	fnConsensusReactor.SetLogger(logger.With("module", "FnConsensus"))
 
 	sw.AddReactor("MEMPOOL", mempoolReactor)
 	sw.AddReactor("BLOCKCHAIN", bcReactor)
@@ -803,6 +813,7 @@ func makeNodeInfo(
 			cs.StateChannel, cs.DataChannel, cs.VoteChannel, cs.VoteSetBitsChannel,
 			mempl.MempoolChannel,
 			evidence.EvidenceChannel,
+			fnConsensus.FnVoteSetChannel,
 		},
 		Moniker: config.Moniker,
 		Other: p2p.DefaultNodeInfoOther{
