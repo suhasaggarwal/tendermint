@@ -199,8 +199,12 @@ func (f *FnConsensusReactor) propose(fnID string, fn Fn, nonce int64, currentSta
 	f.stateMtx.Lock()
 
 	if lastSeenNonce, ok := f.state.LastSeenNonces[fnID]; ok {
-		if nonce <= lastSeenNonce {
+		if nonce < lastSeenNonce {
 			f.Logger.Error("FnConsensusError: nonce is already seen")
+			f.stateMtx.Unlock()
+			return
+		} else if nonce == lastSeenNonce {
+			f.Logger.Info("FnConsensusReactor: Nonce stayed the same, looks like previous round hasnt completed, skipping propose...")
 			f.stateMtx.Unlock()
 			return
 		}
