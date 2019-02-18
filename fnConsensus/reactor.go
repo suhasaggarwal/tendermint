@@ -18,7 +18,7 @@ import (
 const FnVoteSetChannel = byte(0x50)
 
 const maxMsgSize = 500 * 1024
-const ProposeDuration = 20 * time.Second
+const ProposeDuration = 30 * time.Second
 
 type FnConsensusReactor struct {
 	p2p.BaseReactor
@@ -109,7 +109,7 @@ func (f *FnConsensusReactor) calculateMessageHash(message []byte) ([]byte, error
 }
 
 func (f *FnConsensusReactor) proposalRoutine() {
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(ProposeDuration)
 
 OUTER_LOOP:
 	for {
@@ -246,7 +246,6 @@ func (f *FnConsensusReactor) propose(fnID string, fn Fn, nonce int64, currentSta
 		}()
 	}
 	f.peerMapMtx.RUnlock()
-
 }
 
 func (f *FnConsensusReactor) handleVoteSetChannelMessage(sender p2p.Peer, msgBytes []byte) {
@@ -377,7 +376,6 @@ func (f *FnConsensusReactor) handleVoteSetChannelMessage(sender p2p.Peer, msgByt
 		}()
 	}
 	f.peerMapMtx.RUnlock()
-
 }
 
 // Receive is called when msgBytes is received from peer.
