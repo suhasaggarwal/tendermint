@@ -811,7 +811,7 @@ func makeNodeInfo(
 			cs.StateChannel, cs.DataChannel, cs.VoteChannel, cs.VoteSetBitsChannel,
 			mempl.MempoolChannel,
 			evidence.EvidenceChannel,
-			fnConsensus.FnVoteSetChannel,
+			fnConsensus.FnVoteSetChannel, fnConsensus.FnVoteSetMaj23Channel,
 		},
 		Moniker: config.Moniker,
 		Other: p2p.DefaultNodeInfoOther{

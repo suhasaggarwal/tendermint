@@ -8,7 +8,6 @@ import (
 var ErrFnIDIsTaken = errors.New("FnID is already used by another Fn Object")
 
 type Fn interface {
-	GetNonce() (int64, error)
 	SubmitMultiSignedMessage(message []byte, signatures [][]byte)
 	GetMessageAndSignature() ([]byte, []byte, error)
 	MapMessage([]byte, []byte) error

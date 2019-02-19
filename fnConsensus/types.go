@@ -30,50 +30,66 @@ func (f *FnIndividualExecutionResponse) Marshal() ([]byte, error) {
 	return cdc.MarshalBinaryLengthPrefixed(f)
 }
 
+type reactorSetMarshallable struct {
+	CurrentVoteSets          []*FnVoteSet
+	PreviousTimedOutVoteSets []*FnVoteSet
+	PreviousMaj23VoteSets    []*FnVoteSet
+}
+
 type ReactorState struct {
-	CurrentVoteSets map[string]*FnVoteSet
-	LastSeenNonces  map[string]int64
+	CurrentVoteSets          map[string]*FnVoteSet
+	PreviousTimedOutVoteSets map[string]*FnVoteSet
+	PreviousMaj23VoteSets    map[string]*FnVoteSet
 }
 
 func (p *ReactorState) Marshal() ([]byte, error) {
-	voteSetMarshallable := &voteSetMarshallable{
-		CurrentVoteSets: make([]*FnVoteSet, len(p.CurrentVoteSets)),
-		LastSeenNonces:  make([]*fnIDToNonce, len(p.LastSeenNonces)),
+	reactorStateMarshallable := &reactorSetMarshallable{
+		CurrentVoteSets:          make([]*FnVoteSet, len(p.CurrentVoteSets)),
+		PreviousTimedOutVoteSets: make([]*FnVoteSet, len(p.PreviousTimedOutVoteSets)),
+		PreviousMaj23VoteSets:    make([]*FnVoteSet, len(p.PreviousMaj23VoteSets)),
 	}
 
 	i := 0
 	for _, voteSet := range p.CurrentVoteSets {
-		voteSetMarshallable.CurrentVoteSets[i] = voteSet
+		reactorStateMarshallable.CurrentVoteSets[i] = voteSet
 		i++
 	}
 
 	i = 0
-	for fnID, nonce := range p.LastSeenNonces {
-		voteSetMarshallable.LastSeenNonces[i] = &fnIDToNonce{
-			FnID:  fnID,
-			Nonce: nonce,
-		}
+	for _, timedOutVoteSet := range p.PreviousTimedOutVoteSets {
+		reactorStateMarshallable.PreviousTimedOutVoteSets[i] = timedOutVoteSet
 		i++
 	}
 
-	return cdc.MarshalBinaryLengthPrefixed(voteSetMarshallable)
+	i = 0
+	for _, maj23VoteSet := range p.PreviousMaj23VoteSets {
+		reactorStateMarshallable.PreviousMaj23VoteSets[i] = maj23VoteSet
+		i++
+	}
+
+	return cdc.MarshalBinaryLengthPrefixed(reactorStateMarshallable)
 }
 
 func (p *ReactorState) Unmarshal(bz []byte) error {
-	voteSetMarshallable := &voteSetMarshallable{}
-	if err := cdc.UnmarshalBinaryLengthPrefixed(bz, voteSetMarshallable); err != nil {
+	reactorStateMarshallable := &reactorSetMarshallable{}
+	if err := cdc.UnmarshalBinaryLengthPrefixed(bz, reactorStateMarshallable); err != nil {
 		return err
 	}
 
 	p.CurrentVoteSets = make(map[string]*FnVoteSet)
-	p.LastSeenNonces = make(map[string]int64)
+	p.PreviousTimedOutVoteSets = make(map[string]*FnVoteSet)
+	p.PreviousMaj23VoteSets = make(map[string]*FnVoteSet)
 
-	for _, voteSet := range voteSetMarshallable.CurrentVoteSets {
+	for _, voteSet := range reactorStateMarshallable.CurrentVoteSets {
 		p.CurrentVoteSets[voteSet.Payload.Request.FnID] = voteSet
 	}
 
-	for _, fnIDAndNonce := range voteSetMarshallable.LastSeenNonces {
-		p.LastSeenNonces[fnIDAndNonce.FnID] = fnIDAndNonce.Nonce
+	for _, timeOutVoteSet := range reactorStateMarshallable.PreviousTimedOutVoteSets {
+		p.PreviousTimedOutVoteSets[timeOutVoteSet.Payload.Request.FnID] = timeOutVoteSet
+	}
+
+	for _, maj23VoteSet := range reactorStateMarshallable.PreviousMaj23VoteSets {
+		p.PreviousMaj23VoteSets[maj23VoteSet.Payload.Request.FnID] = maj23VoteSet
 	}
 
 	return nil
@@ -81,19 +97,15 @@ func (p *ReactorState) Unmarshal(bz []byte) error {
 
 func NewReactorState(nonce int64, payload *FnVotePayload, valSet *types.ValidatorSet) *ReactorState {
 	return &ReactorState{
-		CurrentVoteSets: make(map[string]*FnVoteSet),
-		LastSeenNonces:  make(map[string]int64),
+		CurrentVoteSets:          make(map[string]*FnVoteSet),
+		PreviousTimedOutVoteSets: make(map[string]*FnVoteSet),
+		PreviousMaj23VoteSets:    make(map[string]*FnVoteSet),
 	}
 }
 
 type fnIDToNonce struct {
 	FnID  string
 	Nonce int64
-}
-
-type voteSetMarshallable struct {
-	CurrentVoteSets []*FnVoteSet
-	LastSeenNonces  []*fnIDToNonce
 }
 
 type FnExecutionRequest struct {
@@ -322,16 +334,14 @@ func NewFnVotePayload(fnRequest *FnExecutionRequest, fnResponse *FnExecutionResp
 type FnVoteSet struct {
 	ChainID             string         `json:"chain_id"`
 	TotalVotingPower    int64          `json:"total_voting_power"`
-	Nonce               int64          `json:"nonce"`
 	CreationTime        int64          `json:"creation_time"`
-	ExpiresIn           int64          `json:"expires_in"`
 	VoteBitArray        *cmn.BitArray  `json:"vote_bitarray"`
 	Payload             *FnVotePayload `json:"vote_payload"`
 	ValidatorSignatures [][]byte       `json:"signature"`
 	ValidatorAddresses  [][]byte       `json:"validator_address"`
 }
 
-func NewVoteSet(chainID string, nonce int64, expiresIn time.Duration, validatorIndex int, initialPayload *FnVotePayload, privValidator types.PrivValidator, valSet *types.ValidatorSet) (*FnVoteSet, error) {
+func NewVoteSet(chainID string, expiresIn time.Duration, validatorIndex int, initialPayload *FnVotePayload, privValidator types.PrivValidator, valSet *types.ValidatorSet) (*FnVoteSet, error) {
 	voteBitArray := cmn.NewBitArray(valSet.Size())
 	signatures := make([][]byte, valSet.Size())
 	validatorAddresses := make([][]byte, valSet.Size())
@@ -359,9 +369,7 @@ func NewVoteSet(chainID string, nonce int64, expiresIn time.Duration, validatorI
 	newVoteSet := &FnVoteSet{
 		ChainID:             chainID,
 		TotalVotingPower:    totalVotingPower,
-		Nonce:               nonce,
 		CreationTime:        time.Now().Unix(),
-		ExpiresIn:           int64(expiresIn),
 		Payload:             initialPayload,
 		VoteBitArray:        voteBitArray,
 		ValidatorSignatures: signatures,
@@ -396,10 +404,6 @@ func (voteSet *FnVoteSet) CannonicalCompare(remoteVoteSet *FnVoteSet) bool {
 		return false
 	}
 
-	if voteSet.Nonce != remoteVoteSet.Nonce {
-		return false
-	}
-
 	if !voteSet.Payload.CannonicalCompare(remoteVoteSet.Payload) {
 		return false
 	}
@@ -428,8 +432,8 @@ func (voteSet *FnVoteSet) SignBytes(validatorIndex int) ([]byte, error) {
 		return nil, err
 	}
 
-	prefix := []byte(fmt.Sprintf("NC:%d|CT:%d|EI:%d|CD:%s|VA:%s|PL:", voteSet.Nonce, voteSet.CreationTime,
-		voteSet.ExpiresIn, voteSet.ChainID, voteSet.ValidatorAddresses[validatorIndex]))
+	prefix := []byte(fmt.Sprintf("CT:%d|CD:%s|VA:%s|PL:", voteSet.CreationTime,
+		voteSet.ChainID, voteSet.ValidatorAddresses[validatorIndex]))
 
 	signBytes := make([]byte, len(prefix)+len(payloadBytes))
 	copy(signBytes, prefix)
@@ -463,10 +467,9 @@ func (voteSet *FnVoteSet) verifyInternal(signature []byte, validatorIndex int, v
 	return nil
 }
 
-func (voteSet *FnVoteSet) IsExpired() bool {
+func (voteSet *FnVoteSet) IsExpired(validityPeriod time.Duration) bool {
 	creationTime := time.Unix(voteSet.CreationTime, 0)
-	expiresIn := time.Duration(voteSet.ExpiresIn)
-	expiryTime := creationTime.Add(expiresIn)
+	expiryTime := creationTime.Add(validityPeriod)
 
 	return expiryTime.Before(time.Now().UTC())
 }
@@ -480,14 +483,14 @@ func (voteSet *FnVoteSet) IsMaj23(currentValidatorSet *types.ValidatorSet) bool 
 }
 
 // Should be the first function to be invoked on vote set received from Peer
-func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.ValidatorSet, registry FnRegistry) bool {
+func (voteSet *FnVoteSet) IsValid(chainID string, validityPeriod time.Duration, currentValidatorSet *types.ValidatorSet, registry FnRegistry) bool {
 	isValid := true
 	numValidators := voteSet.VoteBitArray.Size()
 
 	var calculatedVotingPower int64
 
 	// This if conditions are individual as, we want to pass different errors for each
-	// condition
+	// condition in future.
 
 	if voteSet.Payload == nil {
 		isValid = false
@@ -509,7 +512,7 @@ func (voteSet *FnVoteSet) IsValid(chainID string, currentValidatorSet *types.Val
 		return isValid
 	}
 
-	if voteSet.IsExpired() {
+	if voteSet.IsExpired(validityPeriod) {
 		isValid = false
 		return isValid
 	}
@@ -617,6 +620,6 @@ func RegisterFnConsensusTypes() {
 	cdc.RegisterConcrete(&FnVotePayload{}, "tendermint/fnConsensusReactor/FnVotePayload", nil)
 	cdc.RegisterConcrete(&FnIndividualExecutionResponse{}, "tendermint/fnConsensusReactor/FnIndividualExecutionResponse", nil)
 	cdc.RegisterConcrete(&ReactorState{}, "tendermint/fnConsensusReactor/ReactorState", nil)
-	cdc.RegisterConcrete(&voteSetMarshallable{}, "tendermint/fnConsensusReactor/voteSetMarshallable", nil)
+	cdc.RegisterConcrete(&reactorSetMarshallable{}, "tendermint/fnConsensusReactor/reactorSetMarshallable", nil)
 	cdc.RegisterConcrete(&fnIDToNonce{}, "tendermint/fnConsensusReactor/fnIDToNonce", nil)
 }
