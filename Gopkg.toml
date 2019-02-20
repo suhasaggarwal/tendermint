@@ -101,6 +101,10 @@
   revision = "e2704e165165ec55d062f5919b4b29494e9fa790"
 
 [[constraint]]
+  name = "golang.org/x/net"
+  revision = "292b43bbf7cb8d35ddf40f8d5100ef3837cced3f"
+
+[[constraint]]
   name = "github.com/dgraph-io/badger"
   revision = "3196cc1d7a5f293163f935013ec9a4eb9f6379a6"
 
