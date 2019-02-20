@@ -18,6 +18,15 @@
   revision = "3a771d992973f24aa725d07868b467d1ddfceafb"
 
 [[projects]]
+  branch = "master"
+  digest = "1:093bf93a65962e8191e3e8cd8fc6c363f83d43caca9739c906531ba7210a9904"
+  name = "github.com/btcsuite/btcd"
+  packages = ["btcec"]
+  pruneopts = "UT"
+  revision = "306aecffea325e97f513b3ff0cf7895a5310651d"
+
+[[projects]]
+  branch = "master"
   digest = "1:1d8e1cb71c33a9470bbbae09bfec09db43c6bf358dfcae13cd8807c4e2a9a2bf"
   name = "github.com/btcsuite/btcutil"
   packages = [
@@ -25,7 +34,7 @@
     "bech32",
   ]
   pruneopts = "UT"
-  revision = "d4cc87b860166d00d6b5b9e0d3b3d71d6088d4d4"
+  revision = "4c204d6978034c001714728401fcd63060d568b4"
 
 [[projects]]
   digest = "1:ffe9824d294da03b391f44e1ae8281281b4afc1bdaa9588c9097785e3af10cec"
@@ -82,7 +91,7 @@
   version = "v1.4.7"
 
 [[projects]]
-  digest = "1:fdf5169073fb0ad6dc12a70c249145e30f4058647bea25f0abd48b6d9f228a11"
+  digest = "1:93d2d286c40018927d38382e87fdc8e02993af4178fd3a0ba0f018be7c8f9068"
   name = "github.com/go-kit/kit"
   packages = [
     "log",
@@ -94,8 +103,8 @@
     "metrics/prometheus",
   ]
   pruneopts = "UT"
-  revision = "4dc7be5d2d12881735283bcab7352178e190fc71"
-  version = "v0.6.0"
+  revision = "12210fb6ace19e0496167bb3e667dcd91fa9f69b"
+  version = "v0.8.0"
 
 [[projects]]
   digest = "1:4062bc6de62d73e2be342243cf138cf499b34d558876db8d9430e2149388a4d8"
@@ -106,15 +115,7 @@
   version = "v0.4.0"
 
 [[projects]]
-  digest = "1:586ea76dbd0374d6fb649a91d70d652b7fe0ccffb8910a77468e7702e7901f3d"
-  name = "github.com/go-stack/stack"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "2fee6af1a9795aafbe0253a0cfbdf668e1fb8a9a"
-  version = "v1.8.0"
-
-[[projects]]
-  digest = "1:35621fe20f140f05a0c4ef662c26c0ab4ee50bca78aa30fe87d33120bd28165e"
+  digest = "1:95e1006e41c641abd2f365dfa0f1213c04da294e7cd5f0bf983af234b775db64"
   name = "github.com/gogo/protobuf"
   packages = [
     "gogoproto",
@@ -125,11 +126,11 @@
     "types",
   ]
   pruneopts = "UT"
-  revision = "636bf0302bc95575d69441b25a2603156ffdddf1"
-  version = "v1.1.1"
+  revision = "ba06b47c162d49f2af050fb4c75bcbc86a159d5c"
+  version = "v1.2.1"
 
 [[projects]]
-  digest = "1:17fe264ee908afc795734e8c4e63db2accabaf57326dbf21763a7d6b86096260"
+  digest = "1:4c0989ca0bcd10799064318923b9bc2db6b4d6338dd75f3f2d86c3511aaaf5cf"
   name = "github.com/golang/protobuf"
   packages = [
     "proto",
@@ -139,8 +140,8 @@
     "ptypes/timestamp",
   ]
   pruneopts = "UT"
-  revision = "b4deda0973fb4c70b50d226b1af49f3da59f5265"
-  version = "v1.1.0"
+  revision = "aa810b61a9c79d51363740d207bb46cf8e620ed5"
+  version = "v1.2.0"
 
 [[projects]]
   digest = "1:e4f5819333ac698d294fe04dbf640f84719658d5c7ce195b10060cc37292ce79"
@@ -186,6 +187,7 @@
   version = "v1.0"
 
 [[projects]]
+  branch = "master"
   digest = "1:39b27d1381a30421f9813967a5866fba35dc1d4df43a6eefe3b7a5444cb07214"
   name = "github.com/jmhodges/levigo"
   packages = ["."]
@@ -295,11 +297,12 @@
   revision = "e4d4a2206da023361ed100d85c5f2cf9c8364e9f"
 
 [[projects]]
-  digest = "1:c4556a44e350b50a490544d9b06e9fba9c286c21d6c0e47f54f3a9214597298c"
+  branch = "master"
+  digest = "1:d38f81081a389f1466ec98192cf9115a82158854d6f01e1c23e2e7554b97db71"
   name = "github.com/rcrowley/go-metrics"
   packages = ["."]
   pruneopts = "UT"
-  revision = "e2704e165165ec55d062f5919b4b29494e9fa790"
+  revision = "3113b8401b8a98917cde58f8bbd42a1b1c03b1fd"
 
 [[projects]]
   digest = "1:b0c25f00bad20d783d259af2af8666969e2fc343fa0dc9efe52936bbd67fb758"
@@ -393,7 +396,24 @@
   revision = "2f17a3356c6616cbfc4ae4c38147dc062a68fb0e"
 
 [[projects]]
-  digest = "1:00d2b3e64cdc3fa69aa250dfbe4cc38c4837d4f37e62279be2ae52107ffbbb44"
+  digest = "1:83f5e189eea2baad419a6a410984514266ff690075759c87e9ede596809bd0b8"
+  name = "github.com/tendermint/btcd"
+  packages = ["btcec"]
+  pruneopts = "UT"
+  revision = "80daadac05d1cd29571fccf27002d79667a88b58"
+  version = "v0.1.1"
+
+[[projects]]
+  digest = "1:ad9c4c1a4e7875330b1f62906f2830f043a23edb5db997e3a5ac5d3e6eadf80a"
+  name = "github.com/tendermint/go-amino"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "dc14acf9ef15f85828bfbc561ed9dd9d2a284885"
+  version = "v0.14.1"
+
+[[projects]]
+  branch = "master"
+  digest = "1:3dfb011a1886ba0f830e4791337985788963207eb0cb5c97498f9a459d0e449a"
   name = "golang.org/x/crypto"
   packages = [
     "bcrypt",
@@ -414,10 +434,11 @@
     "salsa20/salsa",
   ]
   pruneopts = "UT"
-  revision = "505ab145d0a99da450461ae2c1a9f6cd10d1f447"
+  revision = "a4c6cb3142f211c99e4bf4cd769535b29a9b616f"
 
 [[projects]]
-  digest = "1:d36f55a999540d29b6ea3c2ea29d71c76b1d9853fdcd3e5c5cb4836f2ba118f1"
+  branch = "master"
+  digest = "1:b85feb86e9ca1033e488682fe0a25d76d672882d83963fe9aeb13331c957c969"
   name = "golang.org/x/net"
   packages = [
     "context",
@@ -430,8 +451,7 @@
     "trace",
   ]
   pruneopts = "UT"
-  revision = "292b43bbf7cb8d35ddf40f8d5100ef3837cced3f"
-
+  revision = "3a22650c66bd7f4fb6d1e8072ffd7b75c8a27898"
 
 [[projects]]
   branch = "master"
@@ -559,6 +579,8 @@
     "github.com/syndtr/goleveldb/leveldb/errors",
     "github.com/syndtr/goleveldb/leveldb/iterator",
     "github.com/syndtr/goleveldb/leveldb/opt",
+    "github.com/tendermint/btcd/btcec",
+    "github.com/tendermint/go-amino",
     "golang.org/x/crypto/bcrypt",
     "golang.org/x/crypto/chacha20poly1305",
     "golang.org/x/crypto/curve25519",
