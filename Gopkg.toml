@@ -22,6 +22,10 @@
 ###########################################################
 
 # Allow only patch releases for serialization libraries
+ignored = [
+  "github.com/x/net/*"
+]
+
 [[constraint]]
   name = "github.com/tendermint/go-amino"
   version = "~0.14.1"
