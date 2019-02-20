@@ -440,22 +440,6 @@
   revision = "505ab145d0a99da450461ae2c1a9f6cd10d1f447"
 
 [[projects]]
-  digest = "1:d36f55a999540d29b6ea3c2ea29d71c76b1d9853fdcd3e5c5cb4836f2ba118f1"
-  name = "golang.org/x/net"
-  packages = [
-    "context",
-    "http/httpguts",
-    "http2",
-    "http2/hpack",
-    "idna",
-    "internal/timeseries",
-    "netutil",
-    "trace",
-  ]
-  pruneopts = "UT"
-  revision = "292b43bbf7cb8d35ddf40f8d5100ef3837cced3f"
-
-[[projects]]
   branch = "master"
   digest = "1:c0d028f9873255bac3cfaa3915499ae0ed186d21d6ab558ca6378f9429854ce5"
   name = "golang.org/x/sys"
