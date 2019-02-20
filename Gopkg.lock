@@ -551,8 +551,6 @@
     "golang.org/x/crypto/nacl/secretbox",
     "golang.org/x/crypto/openpgp/armor",
     "golang.org/x/crypto/ripemd160",
-    "golang.org/x/net/context",
-    "golang.org/x/net/netutil",
     "google.golang.org/grpc",
     "google.golang.org/grpc/credentials",
   ]
