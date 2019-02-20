@@ -450,6 +450,7 @@
     "idna",
     "internal/timeseries",
     "netutil",
+    "trace",
   ]
   pruneopts = "UT"
   revision = "292b43bbf7cb8d35ddf40f8d5100ef3837cced3f"
