@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "prettier": "^1.13.7",
+    "prettier": "^1.19.1",
     "remark-cli": "^5.0.0",
     "remark-lint-no-dead-urls": "^0.3.0",
     "remark-lint-write-good": "^1.0.3",
