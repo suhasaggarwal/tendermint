@@ -5,7 +5,7 @@
     "remark-lint-no-dead-urls": "^0.3.0",
     "remark-lint-write-good": "^1.0.3",
     "textlint": "^10.2.1",
-    "textlint-rule-stop-words": "^1.0.3"
+    "textlint-rule-stop-words": "^1.0.18"
   },
   "name": "tendermint",
   "description": "Tendermint Core Documentation",
