@@ -3,7 +3,7 @@
     "prettier": "^1.13.7",
     "remark-cli": "^5.0.0",
     "remark-lint-no-dead-urls": "^0.3.0",
-    "remark-lint-write-good": "^1.0.3",
+    "remark-lint-write-good": "^1.2.0",
     "textlint": "^10.2.1",
     "textlint-rule-stop-words": "^1.0.3"
   },
