@@ -1,4 +1,4 @@
-FROM alpine:3.7
+FROM alpine:3.14.6
 MAINTAINER Greg Szabo <greg@tendermint.com>
 
 # Tendermint will be looking for the genesis file in /tendermint/config/genesis.json
