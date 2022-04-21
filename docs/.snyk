@@ -1,0 +1,10 @@
+# Snyk (https://snyk.io) policy file, patches or ignores known vulnerabilities.
+version: v1.22.1
+ignore: {}
+# patches apply the minimum changes required to fix a vulnerability
+patch:
+  SNYK-JS-LODASH-567746:
+    - textlint-rule-stop-words > lodash:
+        patched: '2022-04-21T22:19:04.967Z'
+    - textlint > @textlint/linter-formatter > table > lodash:
+        patched: '2022-04-21T22:19:04.967Z'
