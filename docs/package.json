@@ -5,7 +5,8 @@
     "remark-lint-no-dead-urls": "^0.3.0",
     "remark-lint-write-good": "^1.0.3",
     "textlint": "^10.2.1",
-    "textlint-rule-stop-words": "^1.0.3"
+    "textlint-rule-stop-words": "^1.0.3",
+    "@snyk/protect": "latest"
   },
   "name": "tendermint",
   "description": "Tendermint Core Documentation",
@@ -15,7 +16,9 @@
   "scripts": {
     "lint:json": "prettier \"**/*.json\" --write",
     "lint:md": "prettier \"**/*.md\" --write && remark . && textlint \"md/**\"",
-    "lint": "yarn lint:json && yarn lint:md"
+    "lint": "yarn lint:json && yarn lint:md",
+    "prepare": "npm run snyk-protect",
+    "snyk-protect": "snyk-protect"
   },
   "repository": {
     "type": "git",
@@ -36,5 +39,6 @@
       "remark-lint-no-dead-urls",
       "remark-lint-write-good"
     ]
-  }
+  },
+  "snyk": true
 }
