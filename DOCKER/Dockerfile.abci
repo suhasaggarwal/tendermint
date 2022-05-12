@@ -1,4 +1,4 @@
-FROM golang:latest
+FROM golang:1.18-bullseye
 
 RUN mkdir -p /go/src/github.com/tendermint/abci
 WORKDIR /go/src/github.com/tendermint/abci
