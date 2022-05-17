@@ -1,4 +1,4 @@
-FROM alpine:3.7
+FROM alpine:latest
 
 ENV DATA_ROOT /tendermint
 ENV TMHOME $DATA_ROOT
